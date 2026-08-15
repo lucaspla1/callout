@@ -48,6 +48,10 @@ export type CaptionLine = {
 };
 
 const MAX_FINAL_LINES = 3;
+/// Finals disappear after this long — captions are for the moment, not history.
+const LINE_TTL_MS = 7000;
+
+type TimedLine = CaptionLine & { shown_at: number };
 
 export function useCallout() {
   const [status, setStatus] = useState<Status | null>(null);
@@ -55,11 +59,27 @@ export function useCallout() {
   const [channel, setChannel] = useState<string | null>(null);
   const [members, setMembers] = useState<Member[]>([]);
   const [speaking, setSpeaking] = useState<string[]>([]);
-  const [finals, setFinals] = useState<CaptionLine[]>([]);
+  const [finals, setFinals] = useState<TimedLine[]>([]);
   const [partial, setPartial] = useState<CaptionLine | null>(null);
 
+  // Expire old finals once a second.
   useEffect(() => {
-    const unStatus = listen<Status>("status", (e) => setStatus(e.payload));
+    const timer = setInterval(() => {
+      const cutoff = Date.now() - LINE_TTL_MS;
+      setFinals((prev) => (prev.some((l) => l.shown_at < cutoff) ? prev.filter((l) => l.shown_at >= cutoff) : prev));
+    }, 1000);
+    return () => clearInterval(timer);
+  }, []);
+
+  useEffect(() => {
+    const unStatus = listen<Status>("status", (e) => {
+      setStatus(e.payload);
+      // Discord gone → captions are stale context; drop them immediately.
+      if (e.payload.state === "disconnected" || e.payload.state === "waiting_for_discord") {
+        setFinals([]);
+        setPartial(null);
+      }
+    });
     const unCaptionsStatus = listen<CaptionsStatus>("captions_status", (e) => setCaptions(e.payload));
     const unPresence = listen<PresenceEvent>("presence", (e) => {
       const ev = e.payload;
@@ -73,6 +93,8 @@ export function useCallout() {
           setChannel(null);
           setMembers([]);
           setSpeaking([]);
+          setFinals([]);
+          setPartial(null);
           break;
         case "member_joined":
         case "member_updated":
@@ -96,7 +118,7 @@ export function useCallout() {
     const unCaption = listen<CaptionLine>("caption", (e) => {
       const line = e.payload;
       if (line.is_final) {
-        setFinals((prev) => [...prev.slice(-(MAX_FINAL_LINES - 1)), line]);
+        setFinals((prev) => [...prev.slice(-(MAX_FINAL_LINES - 1)), { ...line, shown_at: Date.now() }]);
         setPartial(null);
       } else {
         setPartial(line);

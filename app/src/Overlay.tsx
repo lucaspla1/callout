@@ -26,7 +26,10 @@ function Overlay() {
   const boxStyle = { background: `rgba(18, 19, 24, ${opacity})` };
 
   return (
-    <div className={"overlay-root" + (moveMode ? " moving" : "")}>
+    <div
+      className={"overlay-root" + (moveMode ? " moving" : "")}
+      style={{ ["--cap-a" as string]: opacity }}
+    >
       {moveMode && (
         <div className="drag-handle" data-tauri-drag-region>
           drag to move · ⌘⇧O or the move button to lock
@@ -48,15 +51,15 @@ function Overlay() {
         </div>
       )}
       {(!empty || moveMode) && (
-        <div className="captions" role="log" aria-live="polite" style={boxStyle}>
+        <div className="captions" role="log" aria-live="polite">
           {finals.map((l) => (
-            <p key={l.t_start_ms + l.text} className="line">
+            <p key={l.t_start_ms + l.text} className="line" style={{ ["--lc" as string]: l.color }}>
               <b style={{ color: l.color }}>{l.speaker_label}</b>
               <span>{l.text}</span>
             </p>
           ))}
           {partial && (
-            <p className="line partial">
+            <p className="line partial" style={{ ["--lc" as string]: partial.color }}>
               <b style={{ color: partial.color }}>{partial.speaker_label}</b>
               <span>
                 {partial.text}

@@ -134,13 +134,13 @@ function App() {
       <section className="game" aria-label="Pretend this is your game">
         <div className="captions" role="log" aria-live="polite">
           {finals.map((l) => (
-            <p key={l.t_start_ms + l.text} className="line">
+            <p key={l.t_start_ms + l.text} className="line" style={{ ["--lc" as string]: l.color }}>
               <b style={{ color: l.color }}>{l.speaker_label}</b>
               <span>{l.text}</span>
             </p>
           ))}
           {partial && (
-            <p className="line partial">
+            <p className="line partial" style={{ ["--lc" as string]: partial.color }}>
               <b style={{ color: partial.color }}>{partial.speaker_label}</b>
               <span>
                 {partial.text}

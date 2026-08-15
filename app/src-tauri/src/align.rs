@@ -193,10 +193,9 @@ fn line_for_ids(
     is_final: bool,
     t_start_ms: u64,
 ) -> CaptionLine {
-    let names: Vec<&str> = ids
-        .iter()
-        .filter_map(|id| roster.get(id).map(|m| m.display_name.as_str()))
-        .collect();
+    // Joint lines get a count, not concatenated names — display names can be
+    // sentence-length ("Let me use your private server") and drown the caption.
+    // The who's-speaking chip strip shows the actual identities.
     let (label, color) = match ids {
         [] => ("?".to_string(), "#9BA0AE".to_string()),
         [one] => {
@@ -206,7 +205,7 @@ fn line_for_ids(
                 m.map(|m| m.color.clone()).unwrap_or_else(|| "#9BA0AE".into()),
             )
         }
-        _ => (names.join(" + "), "#E9EAF0".to_string()),
+        many => (format!("{} speaking", many.len()), "#9BA0AE".to_string()),
     };
     CaptionLine {
         speaker_ids: ids.to_vec(),
@@ -263,7 +262,7 @@ mod tests {
         ]);
         let line = attribute(&log, &roster, "yeah", true, 2200, 2900);
         assert_eq!(line.speaker_ids.len(), 2);
-        assert!(line.speaker_label.contains('+'));
+        assert_eq!(line.speaker_label, "2 speaking");
     }
 
     #[test]
@@ -381,7 +380,7 @@ mod tests {
         let lines = attribute_final(&log, &roster, "no", &words, 900, 2000);
         assert_eq!(lines.len(), 1);
         assert_eq!(lines[0].speaker_ids.len(), 2);
-        assert!(lines[0].speaker_label.contains('+'));
+        assert_eq!(lines[0].speaker_label, "2 speaking");
     }
 
     #[test]
