@@ -10,11 +10,26 @@
     "frontendDist": "../dist"
   },
   "app": {
+    "macOSPrivateApi": true,
     "windows": [
       {
         "title": "Callout — dev preview",
         "width": 900,
         "height": 640
+      },
+      {
+        "label": "overlay",
+        "title": "Callout Overlay",
+        "width": 760,
+        "height": 240,
+        "transparent": true,
+        "decorations": false,
+        "alwaysOnTop": true,
+        "skipTaskbar": true,
+        "resizable": false,
+        "focus": false,
+        "shadow": false,
+        "visibleOnAllWorkspaces": true
       }
     ],
     "security": {

@@ -47,20 +47,58 @@ fn set_languages(state: tauri::State<settings::SettingsHandle>, languages: Vec<S
     state.set_languages(languages);
 }
 
+/// Toggle hotkey for the caption overlay.
+const TOGGLE_SHORTCUT: &str = "CmdOrCtrl+Shift+C";
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
+        .plugin(
+            tauri_plugin_global_shortcut::Builder::new()
+                .with_shortcuts([TOGGLE_SHORTCUT])
+                .expect("valid shortcut")
+                .with_handler(|app, _shortcut, event| {
+                    if event.state() == tauri_plugin_global_shortcut::ShortcutState::Pressed {
+                        if let Some(overlay) = app.get_webview_window("overlay") {
+                            if overlay.is_visible().unwrap_or(false) {
+                                let _ = overlay.hide();
+                            } else {
+                                let _ = overlay.show();
+                            }
+                        }
+                    }
+                })
+                .build(),
+        )
         .invoke_handler(tauri::generate_handler![get_languages, set_languages])
         .setup(|app| {
             let data_dir = app.path().app_data_dir().unwrap_or_default();
             let settings = settings::SettingsHandle::load(data_dir);
             app.manage(settings.clone());
+            setup_overlay_window(app.handle());
             spawn_pipeline(app.handle().clone(), settings);
             Ok(())
         })
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
+}
+
+/// Overlay: click-through and parked bottom-center of the primary monitor.
+/// (Custom positioning/size lands with the settings UI.)
+fn setup_overlay_window(app: &AppHandle) {
+    let Some(overlay) = app.get_webview_window("overlay") else { return };
+    let _ = overlay.set_ignore_cursor_events(true);
+    if let Ok(Some(monitor)) = overlay.primary_monitor() {
+        let scale = monitor.scale_factor();
+        let screen_w = monitor.size().width as f64 / scale;
+        let screen_h = monitor.size().height as f64 / scale;
+        let (w, h) = (760.0, 240.0);
+        let _ = overlay.set_position(tauri::LogicalPosition::new(
+            (screen_w - w) / 2.0,
+            screen_h - h - 60.0,
+        ));
+    }
 }
 
 /// Wires the whole thing together:
