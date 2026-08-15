@@ -142,9 +142,11 @@ html, body { margin: 0; background: transparent; }
 .captions {
   display: flex;
   flex-direction: column;
-  align-items: flex-start;
+  align-items: stretch;
   gap: 6px;
-  max-width: 640px;
+  /* Fixed column: lines never grow sideways as someone talks — long text
+     wraps downward inside its pill instead. */
+  width: min(560px, 92vw);
   font-size: 16px;
   line-height: 1.5;
   background: transparent;
@@ -156,12 +158,18 @@ html, body { margin: 0; background: transparent; }
   gap: 10px;
   align-items: baseline;
   margin: 0;
+  width: 100%;
   background: rgba(18, 19, 24, var(--cap-a, 0.92));
   border-left: 3px solid var(--lc);
   border-radius: 8px;
   padding: 5px 14px 5px 11px;
   box-shadow: 0 4px 16px rgba(0, 0, 0, 0.35);
   color: #f4f5f9;
+}
+.line > span {
+  min-width: 0;
+  flex: 1;
+  overflow-wrap: anywhere;
 }
 .line b {
   white-space: nowrap;
