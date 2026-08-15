@@ -155,16 +155,18 @@ fn spawn_pipeline(app: AppHandle, settings: settings::SettingsHandle) {
                     }
                 },
                 Some(ev) = stt_rx.recv() => {
-                    let line = match ev {
+                    match ev {
                         SttEvent::Partial { text, t_start_ms } => {
-                            align::attribute(&log, &roster, &text, false, t_start_ms, now_ms())
+                            let line = align::attribute(&log, &roster, &text, false, t_start_ms, now_ms());
+                            let _ = app.emit("caption", &line);
                         }
-                        SttEvent::Final { text, t_start_ms, t_end_ms } => {
+                        SttEvent::Final { text, words, t_start_ms, t_end_ms } => {
                             eprintln!("[callout] final: {text:?}");
-                            align::attribute(&log, &roster, &text, true, t_start_ms, t_end_ms)
+                            for line in align::attribute_final(&log, &roster, &text, &words, t_start_ms, t_end_ms) {
+                                let _ = app.emit("caption", &line);
+                            }
                         }
-                    };
-                    let _ = app.emit("caption", &line);
+                    }
                 }
                 Some(cs) = cstatus_rx.recv() => {
                     eprintln!("[callout] captions: {cs:?}");

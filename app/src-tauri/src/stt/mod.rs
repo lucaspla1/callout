@@ -14,13 +14,23 @@ use tokio::sync::mpsc;
 use crate::capture::PcmChunk;
 use crate::CaptionsStatus;
 
+/// One recognized word with absolute shared-clock timing (from whisper token
+/// timestamps). Empty `words` on a Final means timing was unavailable —
+/// consumers must fall back to whole-utterance attribution.
+#[derive(Debug, Clone, Serialize)]
+pub struct Word {
+    pub text: String,
+    pub t0_ms: u64,
+    pub t1_ms: u64,
+}
+
 #[derive(Debug, Clone, Serialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum SttEvent {
     /// Provisional text for the utterance in progress; replaces the previous Partial.
     Partial { text: String, t_start_ms: u64 },
     /// Utterance finalized; immutable afterwards.
-    Final { text: String, t_start_ms: u64, t_end_ms: u64 },
+    Final { text: String, words: Vec<Word>, t_start_ms: u64, t_end_ms: u64 },
 }
 
 /// A decode job produced by the VAD gate for the engine worker.
@@ -103,6 +113,7 @@ impl MockStt {
                 }
                 let _ = tx.send(SttEvent::Final {
                     text: phrase.to_string(),
+                    words: Vec::new(),
                     t_start_ms: t_start,
                     t_end_ms: now_ms(),
                 });
