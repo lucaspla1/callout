@@ -73,7 +73,14 @@ function App() {
             🎙 {CAPTIONS_TEXT[captions.state]}
           </span>
         )}
-        <span className="stage" title="⌘⇧C toggles the overlay · ⌘⇧M unlocks dragging it">⌘⇧C overlay · ⌘⇧M move</span>
+        <span className="stage" title="Global hotkey: toggle the overlay">⌘⇧C overlay</span>
+        <button
+          className="lang"
+          title="Unlock the overlay to drag it (also ⌘⇧O); click again to lock"
+          onClick={() => invoke("toggle_move_overlay").catch(() => {})}
+        >
+          ✥ move
+        </button>
         <span className="opacity-slider" title="Overlay background opacity">
           <input
             type="range"

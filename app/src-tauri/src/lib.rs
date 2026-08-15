@@ -52,6 +52,12 @@ fn get_overlay_opacity(state: tauri::State<settings::SettingsHandle>) -> f64 {
     state.overlay_opacity()
 }
 
+/// UI fallback for the move hotkey (hotkeys can lose conflicts to other apps).
+#[tauri::command]
+fn toggle_move_overlay(app: AppHandle) {
+    toggle_move_mode(&app);
+}
+
 #[tauri::command]
 fn set_overlay_opacity(
     app: AppHandle,
@@ -63,8 +69,9 @@ fn set_overlay_opacity(
 }
 
 /// Toggle hotkey for the caption overlay; move hotkey unlocks dragging.
+/// (Move is ⌘⇧O, not ⌘⇧M — Discord's own global mute hotkey owns ⌘⇧M.)
 const TOGGLE_SHORTCUT: &str = "CmdOrCtrl+Shift+C";
-const MOVE_SHORTCUT: &str = "CmdOrCtrl+Shift+M";
+const MOVE_SHORTCUT: &str = "CmdOrCtrl+Shift+O";
 
 static MOVE_MODE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
@@ -116,6 +123,7 @@ pub fn run() {
                     if event.state() != ShortcutState::Pressed {
                         return;
                     }
+                    eprintln!("[callout] hotkey: {shortcut}");
                     let move_sc = Shortcut::from_str(MOVE_SHORTCUT).expect("valid");
                     if shortcut == &move_sc {
                         toggle_move_mode(app);
@@ -129,7 +137,8 @@ pub fn run() {
             get_languages,
             set_languages,
             get_overlay_opacity,
-            set_overlay_opacity
+            set_overlay_opacity,
+            toggle_move_overlay
         ])
         .setup(|app| {
             let data_dir = app.path().app_data_dir().unwrap_or_default();

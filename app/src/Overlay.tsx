@@ -29,7 +29,7 @@ function Overlay() {
     <div className={"overlay-root" + (moveMode ? " moving" : "")}>
       {moveMode && (
         <div className="drag-handle" data-tauri-drag-region>
-          drag to move · ⌘⇧M to lock
+          drag to move · ⌘⇧O or the move button to lock
         </div>
       )}
       {channel && (

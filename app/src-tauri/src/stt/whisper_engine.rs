@@ -235,7 +235,10 @@ fn run_full(
     params.set_suppress_blank(true);
     params.set_suppress_nst(true);
     params.set_temperature(0.0);
-    params.set_no_timestamps(true);
+    // Finals need timestamp processing on, or token t0/t1 come back -1 and
+    // word-level attribution silently falls back (text is unaffected either
+    // way — proven byte-identical by ab_tests).
+    params.set_no_timestamps(!token_timestamps);
     params.set_print_special(false);
     params.set_print_progress(false);
     params.set_print_realtime(false);
@@ -310,6 +313,15 @@ mod ab_tests {
             eprintln!("[ab]   A: {baseline:?}");
             eprintln!("[ab]   B: {with_ts:?}");
             assert_eq!(baseline, with_ts, "text changed for {name}");
+
+            // The timing config must also yield real, ordered word spans.
+            let words = collect_words(&state, 0);
+            assert!(!words.is_empty(), "no word timings for {name}");
+            let spread = words.last().unwrap().t1_ms.saturating_sub(words[0].t0_ms);
+            assert!(spread > 500, "degenerate spans for {name}: spread {spread}ms");
+            let dump: Vec<String> =
+                words.iter().take(6).map(|w| format!("{}@{}-{}", w.text, w.t0_ms, w.t1_ms)).collect();
+            eprintln!("[ab]   words: {} …", dump.join(" "));
         }
     }
 
@@ -332,7 +344,9 @@ mod ab_tests {
         params.set_suppress_blank(true);
         params.set_suppress_nst(true);
         params.set_temperature(0.0);
-        params.set_no_timestamps(true);
+        // Timing config: token timestamps only compute real values with
+        // timestamp processing enabled — mirror production's decode_final.
+        params.set_no_timestamps(!token_timestamps);
         params.set_print_special(false);
         params.set_print_progress(false);
         params.set_print_realtime(false);

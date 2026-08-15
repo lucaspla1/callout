@@ -216,7 +216,18 @@ impl<'a, S: AsyncRead + AsyncWrite + Unpin> Session<'a, S> {
             self.call(json!({ "cmd": "SUBSCRIBE", "evt": evt, "args": { "channel_id": channel_id } }))
                 .await?;
         }
-        let snap = self.call(json!({ "cmd": "GET_SELECTED_VOICE_CHANNEL", "args": {} })).await?;
+        let mut snap = self.call(json!({ "cmd": "GET_SELECTED_VOICE_CHANNEL", "args": {} })).await?;
+        // Right after joining, Discord sometimes answers with an empty roster;
+        // one delayed re-snapshot fills it (missing members otherwise trickle
+        // in only as they change state).
+        let empty_roster = snap
+            .get("voice_states")
+            .and_then(|v| v.as_array())
+            .is_none_or(|v| v.is_empty());
+        if empty_roster {
+            tokio::time::sleep(Duration::from_millis(700)).await;
+            snap = self.call(json!({ "cmd": "GET_SELECTED_VOICE_CHANNEL", "args": {} })).await?;
+        }
         match serde_json::from_value::<proto::SelectedChannel>(snap) {
             Ok(ch) => {
                 let members: Vec<Member> =
