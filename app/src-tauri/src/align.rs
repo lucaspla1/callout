@@ -26,10 +26,6 @@ pub struct SpeakingSpan {
     pub start_ms: u64,
     /// None while still speaking.
     pub end_ms: Option<u64>,
-    /// Started while someone else was already speaking — a (potential)
-    /// interjection. Such spans only count for attribution after a grace
-    /// period, so laughs and "yeah"s don't steal the established speaker's line.
-    pub interjection: bool,
 }
 
 /// Rolling state of who spoke when. Pruned to a small horizon; this never grows unbounded.
@@ -45,15 +41,7 @@ impl SpeakingLog {
     }
 
     pub fn speaking_start(&mut self, user_id: &str, at_ms: u64) {
-        let someone_else_talking = self
-            .spans
-            .iter()
-            .any(|(id, spans)| id != user_id && spans.iter().any(|s| s.end_ms.is_none()));
-        self.spans.entry(user_id.to_string()).or_default().push(SpeakingSpan {
-            start_ms: at_ms,
-            end_ms: None,
-            interjection: someone_else_talking,
-        });
+        self.spans.entry(user_id.to_string()).or_default().push(SpeakingSpan { start_ms: at_ms, end_ms: None });
         self.prune(at_ms);
     }
 
@@ -84,14 +72,13 @@ impl SpeakingLog {
     /// Discord keeps the speaking indicator lit a beat after speech ends; trim
     /// closed spans' tails before word matching so indicator tails don't
     /// read as overlap.
+    /// (An "onset grace" for interjections was tried and reverted: with the
+    /// indicator hangover, normal turn-taking looks like interjection, and the
+    /// next speaker's real words got attributed to the previous speaker.)
     const HANGOVER_TRIM_MS: u64 = 250;
-    /// An interjection (started over someone) only counts once it has lasted
-    /// this long — filters laughs and one-word barks out of attribution.
-    const ONSET_GRACE_MS: u64 = 400;
 
-    /// For each user, the fraction of [t0, t1] their speaking spans cover,
-    /// after tail trimming and interjection onset grace. Sorted by coverage,
-    /// highest first; zero-coverage users omitted.
+    /// For each user, the fraction of [t0, t1] their (tail-trimmed) speaking
+    /// spans cover. Sorted by coverage, highest first; zero-coverage users omitted.
     pub fn coverage_between(&self, t0: u64, t1: u64) -> Vec<(String, f32)> {
         let len = t1.saturating_sub(t0).max(1) as f32;
         let mut out: Vec<(String, f32)> = self
@@ -101,19 +88,11 @@ impl SpeakingLog {
                 let covered: u64 = spans
                     .iter()
                     .map(|s| {
-                        let start = if s.interjection {
-                            s.start_ms + Self::ONSET_GRACE_MS
-                        } else {
-                            s.start_ms
-                        };
                         let end = match s.end_ms {
                             Some(e) => e.saturating_sub(Self::HANGOVER_TRIM_MS).max(s.start_ms),
                             None => u64::MAX,
                         };
-                        if start >= end {
-                            return 0; // interjection too short to ever count
-                        }
-                        let lo = start.max(t0);
+                        let lo = s.start_ms.max(t0);
                         let hi = end.min(t1);
                         hi.saturating_sub(lo)
                     })
@@ -247,10 +226,7 @@ pub fn attribute(
     t0: u64,
     t1: u64,
 ) -> CaptionLine {
-    // Same dominance rules as word attribution: over a whole (partial)
-    // utterance the established speaker usually dominates, so partials show
-    // their name instead of flapping to a joint label.
-    let ids = log.word_speakers(t0, t1);
+    let ids = log.speakers_between(t0, t1);
     line_for_ids(&ids, roster, text, is_final, t0)
 }
 
@@ -421,25 +397,6 @@ mod tests {
         ]);
         let words = vec![word("rotate", 1000, 2000)];
         let lines = attribute_final(&log, &roster, "rotate", &words, 1000, 2000);
-        assert_eq!(lines.len(), 1);
-        assert_eq!(lines[0].speaker_label, "Marina");
-    }
-
-    #[test]
-    fn micro_interjection_never_counts() {
-        // B barks a 300ms "yeah" over A's speech: shorter than the onset grace,
-        // so A keeps every word.
-        let mut log = SpeakingLog::new();
-        log.speaking_start("1", 0);
-        log.speaking_stop("1", 3000);
-        log.speaking_start("2", 1000); // over A → interjection
-        log.speaking_stop("2", 1300);
-        let roster = HashMap::from([
-            ("1".to_string(), member("1", "Marina")),
-            ("2".to_string(), member("2", "Lucas")),
-        ]);
-        let words = vec![word("rotating", 800, 1400), word("now", 1500, 1800)];
-        let lines = attribute_final(&log, &roster, "rotating now", &words, 0, 3000);
         assert_eq!(lines.len(), 1);
         assert_eq!(lines[0].speaker_label, "Marina");
     }

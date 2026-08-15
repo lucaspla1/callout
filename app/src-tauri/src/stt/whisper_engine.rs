@@ -15,6 +15,31 @@ use crate::CaptionsStatus;
 /// whisper misbehaves on very short inputs; pad to at least ~1.1 s.
 const MIN_SAMPLES: usize = (TARGET_RATE as usize * 11) / 10;
 
+/// whisper's classic hallucinations on noise/beeps/silence (YouTube training
+/// artifacts) — "Thanks for watching." shows up on every join beep. Matched
+/// against the normalized whole line.
+fn is_known_hallucination(text: &str) -> bool {
+    let norm: String = text
+        .to_lowercase()
+        .chars()
+        .filter(|c| !c.is_ascii_punctuation() && *c != '！' && *c != '。')
+        .collect::<String>()
+        .trim()
+        .to_string();
+    const PREFIXES: &[&str] = &[
+        "thanks for watching",
+        "thank you for watching",
+        "thank you so much for watching",
+        "obrigado por assistir",
+        "obrigada por assistir",
+        "gracias por ver",
+        "subtitles by the amaraorg",
+        "legendas pela comunidade",
+        "sous-titres",
+    ];
+    PREFIXES.iter().any(|p| norm.starts_with(p))
+}
+
 pub fn spawn_worker(
     model_path: PathBuf,
     settings: Arc<RwLock<Settings>>,
@@ -80,7 +105,7 @@ pub fn spawn_worker(
                 match job {
                     Job::Partial { pcm, t_start_ms } => {
                         if let Some(text) = decode(&mut state, &pcm, utt_lang.as_deref(), threads) {
-                            if !text.is_empty() {
+                            if !text.is_empty() && !is_known_hallucination(&text) {
                                 let _ = event_tx.send(SttEvent::Partial { text, t_start_ms });
                             }
                         }
@@ -91,9 +116,9 @@ pub fn spawn_worker(
                         if let Some((text, words)) =
                             decode_final(&mut state, &pcm, utt_lang.as_deref(), threads, t_start_ms)
                         {
-                            // Hallucination guards: empty or exact repeat of the
-                            // previous final (whisper's classic noise output).
-                            if !text.is_empty() && text != last_final {
+                            // Hallucination guards: empty, exact repeat of the
+                            // previous final, or a known noise hallucination.
+                            if !text.is_empty() && text != last_final && !is_known_hallucination(&text) {
                                 last_final = text.clone();
                                 let _ = event_tx.send(SttEvent::Final { text, words, t_start_ms, t_end_ms });
                             }
