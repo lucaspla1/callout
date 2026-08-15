@@ -26,7 +26,8 @@ html, body { margin: 0; background: transparent; }
   gap: 6px;
   /* Same fixed column as the captions, so the two blocks line up. */
   width: min(560px, 92vw);
-  background: rgba(18, 19, 24, 0.75);
+  background: rgba(30, 33, 42, 0.88);
+  border: 1px solid rgba(255, 255, 255, 0.08);
   border-radius: 12px;
   padding: 5px 10px;
 }
@@ -166,12 +167,15 @@ html, body { margin: 0; background: transparent; }
   align-items: baseline;
   margin: 0;
   width: 100%;
-  background: rgba(18, 19, 24, var(--cap-a, 0.92));
+  /* Slightly blue-lifted ground + hairline so pills separate from dark
+     game/app backgrounds instead of melting into them. */
+  background: rgba(30, 33, 42, var(--cap-a, 0.92));
+  border: 1px solid rgba(255, 255, 255, 0.08);
   border-left: 3px solid var(--lc);
   border-radius: 8px;
   padding: 5px 14px 5px 11px;
-  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.35);
-  color: #f4f5f9;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.45);
+  color: #f7f8fb;
 }
 .line > span {
   min-width: 0;

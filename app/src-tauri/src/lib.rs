@@ -283,8 +283,12 @@ fn spawn_pipeline(app: AppHandle, settings: settings::SettingsHandle) {
                             PresenceEvent::ChannelJoined { channel_name, members } => {
                                 eprintln!("[callout] joined '{channel_name}' with {} member(s)", members.len());
                                 roster = members.iter().cloned().map(|m| (m.id.clone(), m)).collect();
+                                log = SpeakingLog::new(); // stale spans must not cross channels
                             }
-                            PresenceEvent::ChannelLeft => roster.clear(),
+                            PresenceEvent::ChannelLeft => {
+                                roster.clear();
+                                log = SpeakingLog::new();
+                            }
                             PresenceEvent::MemberJoined { member } | PresenceEvent::MemberUpdated { member } => {
                                 roster.insert(member.id.clone(), member.clone());
                             }

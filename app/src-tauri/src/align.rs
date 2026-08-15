@@ -35,13 +35,26 @@ pub struct SpeakingLog {
     horizon_ms: u64,
 }
 
+/// No real speaking indicator stays lit this long; an open span older than
+/// this means we missed the STOP event (dropped dispatch, reconnect). Left
+/// unexpired, such a span covers every future word — the "everything slowly
+/// becomes '2 speaking'" degradation.
+const MAX_OPEN_SPAN_MS: u64 = 20_000;
+
 impl SpeakingLog {
     pub fn new() -> Self {
         Self { spans: HashMap::new(), horizon_ms: 30_000 }
     }
 
     pub fn speaking_start(&mut self, user_id: &str, at_ms: u64) {
-        self.spans.entry(user_id.to_string()).or_default().push(SpeakingSpan { start_ms: at_ms, end_ms: None });
+        let spans = self.spans.entry(user_id.to_string()).or_default();
+        // A new START with the previous span still open = we missed a STOP.
+        if let Some(last) = spans.last_mut() {
+            if last.end_ms.is_none() {
+                last.end_ms = Some(at_ms.min(last.start_ms + MAX_OPEN_SPAN_MS));
+            }
+        }
+        spans.push(SpeakingSpan { start_ms: at_ms, end_ms: None });
         self.prune(at_ms);
     }
 
@@ -130,6 +143,11 @@ impl SpeakingLog {
     fn prune(&mut self, now_ms: u64) {
         let cutoff = now_ms.saturating_sub(self.horizon_ms);
         for spans in self.spans.values_mut() {
+            for s in spans.iter_mut() {
+                if s.end_ms.is_none() && now_ms.saturating_sub(s.start_ms) > MAX_OPEN_SPAN_MS {
+                    s.end_ms = Some(s.start_ms + MAX_OPEN_SPAN_MS); // missed STOP — expire
+                }
+            }
             spans.retain(|s| s.end_ms.map_or(true, |e| e >= cutoff));
         }
         self.spans.retain(|_, spans| !spans.is_empty());
@@ -272,6 +290,35 @@ mod tests {
         let roster = HashMap::from([("1".to_string(), member("1", "Marina"))]);
         let line = attribute(&log, &roster, "still talking", false, 1500, 2000);
         assert_eq!(line.speaker_label, "Marina");
+    }
+
+    #[test]
+    fn missed_stop_closes_on_next_start() {
+        // We never saw A's STOP; their next START must close the orphan span
+        // instead of leaving it open (= covering every future word).
+        let mut log = SpeakingLog::new();
+        log.speaking_start("1", 0); // STOP lost
+        log.speaking_start("1", 5000);
+        log.speaking_stop("1", 6000);
+        assert!(log.speakers_between(8000, 9000).is_empty());
+    }
+
+    #[test]
+    fn stale_open_span_expires() {
+        // A's STOP was lost and they never spoke again; 30s later their ghost
+        // span must not join B's words.
+        let mut log = SpeakingLog::new();
+        log.speaking_start("1", 0); // STOP lost forever
+        log.speaking_start("2", 30_000); // prune runs here
+        log.speaking_stop("2", 33_000);
+        let roster = HashMap::from([
+            ("1".to_string(), member("1", "Marina")),
+            ("2".to_string(), member("2", "Lucas")),
+        ]);
+        let words = vec![word("hello", 31_000, 31_500)];
+        let lines = attribute_final(&log, &roster, "hello", &words, 31_000, 32_000);
+        assert_eq!(lines.len(), 1);
+        assert_eq!(lines[0].speaker_label, "Lucas");
     }
 
     #[test]
