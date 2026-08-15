@@ -32,10 +32,17 @@ const CAPTIONS_TEXT: Record<CaptionsStatus["state"], string> = {
 function App() {
   const { status, captions, channel, members, speaking, finals, partial } = useCallout();
   const [languages, setLanguages] = useState<string[]>([]);
+  const [opacity, setOpacity] = useState(0.92);
 
   useEffect(() => {
     invoke<string[]>("get_languages").then(setLanguages).catch(() => {});
+    invoke<number>("get_overlay_opacity").then(setOpacity).catch(() => {});
   }, []);
+
+  const changeOpacity = (value: number) => {
+    setOpacity(value);
+    invoke("set_overlay_opacity", { opacity: value }).catch(() => {});
+  };
 
   const toggleLanguage = (code: string) => {
     setLanguages((prev) => {
@@ -66,7 +73,17 @@ function App() {
             🎙 {CAPTIONS_TEXT[captions.state]}
           </span>
         )}
-        <span className="stage" title="Toggle the in-game overlay">⌘⇧C overlay</span>
+        <span className="stage" title="⌘⇧C toggles the overlay · ⌘⇧M unlocks dragging it">⌘⇧C overlay · ⌘⇧M move</span>
+        <span className="opacity-slider" title="Overlay background opacity">
+          <input
+            type="range"
+            min={0.2}
+            max={1}
+            step={0.05}
+            value={opacity}
+            onChange={(e) => changeOpacity(Number(e.target.value))}
+          />
+        </span>
         {channel ? (
           <span className="channel">
             🔊 {channel}

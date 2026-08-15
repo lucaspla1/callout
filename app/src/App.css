@@ -27,6 +27,24 @@ html, body { margin: 0; background: transparent; }
   border-radius: 999px;
   padding: 4px 10px;
 }
+.overlay-root.moving {
+  outline: 2px dashed #7a87f8;
+  outline-offset: -2px;
+  border-radius: 12px;
+}
+.drag-handle {
+  background: #7a87f8;
+  color: #17181d;
+  font-size: 12px;
+  font-weight: 700;
+  border-radius: 999px;
+  padding: 4px 14px;
+  cursor: grab;
+  user-select: none;
+}
+
+.opacity-slider { display: flex; align-items: center; gap: 6px; font-size: 11px; color: #9ba0ae; }
+.opacity-slider input { width: 80px; accent-color: #7a87f8; }
 
 .shell {
   height: 100vh;

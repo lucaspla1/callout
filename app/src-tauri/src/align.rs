@@ -69,6 +69,64 @@ impl SpeakingLog {
         out
     }
 
+    /// Discord keeps the speaking indicator lit a beat after speech ends; trim
+    /// closed spans' tails before word matching so interjection tails don't
+    /// read as overlap.
+    const HANGOVER_TRIM_MS: u64 = 250;
+
+    /// For each user, the fraction of [t0, t1] their (tail-trimmed) speaking
+    /// spans cover. Sorted by coverage, highest first; zero-coverage users omitted.
+    pub fn coverage_between(&self, t0: u64, t1: u64) -> Vec<(String, f32)> {
+        let len = t1.saturating_sub(t0).max(1) as f32;
+        let mut out: Vec<(String, f32)> = self
+            .spans
+            .iter()
+            .filter_map(|(id, spans)| {
+                let covered: u64 = spans
+                    .iter()
+                    .map(|s| {
+                        let end = match s.end_ms {
+                            Some(e) => {
+                                let trimmed = e.saturating_sub(Self::HANGOVER_TRIM_MS);
+                                trimmed.max(s.start_ms)
+                            }
+                            None => u64::MAX,
+                        };
+                        let lo = s.start_ms.max(t0);
+                        let hi = end.min(t1);
+                        hi.saturating_sub(lo)
+                    })
+                    .sum();
+                let frac = covered as f32 / len;
+                (frac > 0.0).then(|| (id.clone(), frac.min(1.0)))
+            })
+            .collect();
+        out.sort_by(|a, b| b.1.total_cmp(&a.1).then(a.0.cmp(&b.0)));
+        out
+    }
+
+    /// Pick the speaker id(s) for one word span. Prefers a single dominant
+    /// speaker; keeps a joint set only when coverage is genuinely comparable.
+    pub fn word_speakers(&self, t0: u64, t1: u64) -> Vec<String> {
+        let cov = self.coverage_between(t0, t1);
+        let strong: Vec<&(String, f32)> = cov.iter().filter(|(_, c)| *c >= 0.5).collect();
+        let pool: Vec<&(String, f32)> = if strong.is_empty() {
+            cov.iter().filter(|(_, c)| *c >= 0.2).collect()
+        } else {
+            strong
+        };
+        match pool.as_slice() {
+            [] => Vec::new(),
+            [one] => vec![one.0.clone()],
+            [first, second, ..] if first.1 >= 2.5 * second.1 => vec![first.0.clone()],
+            many => {
+                let mut ids: Vec<String> = many.iter().map(|(id, _)| id.clone()).collect();
+                ids.sort();
+                ids
+            }
+        }
+    }
+
     fn prune(&mut self, now_ms: u64) {
         let cutoff = now_ms.saturating_sub(self.horizon_ms);
         for spans in self.spans.values_mut() {
@@ -98,7 +156,7 @@ pub fn attribute_final(
     // Runs of consecutive words sharing a speaker set.
     let mut runs: Vec<(Vec<String>, Vec<&str>, u64)> = Vec::new(); // (ids, words, run_t0)
     for w in words {
-        let mut ids = log.speakers_between(w.t0_ms, w.t1_ms.max(w.t0_ms + 1));
+        let mut ids = log.word_speakers(w.t0_ms, w.t1_ms.max(w.t0_ms + 1));
         if ids.is_empty() {
             if let Some(last) = runs.last() {
                 ids = last.0.clone();
@@ -279,6 +337,68 @@ mod tests {
         let lines = attribute_final(&log, &roster, "hello there", &[], 0, 1000);
         assert_eq!(lines.len(), 1);
         assert_eq!(lines[0].text, "hello there");
+        assert_eq!(lines[0].speaker_label, "Marina");
+    }
+
+    #[test]
+    fn hangover_tail_does_not_join() {
+        // A's Discord indicator stays lit until 1400 but their speech ended ~1000;
+        // B starts at 1100. B's words at 1150+ must NOT come out as "A + B".
+        let mut log = SpeakingLog::new();
+        log.speaking_start("1", 0);
+        log.speaking_stop("1", 1400); // trimmed to 1150 internally
+        log.speaking_start("2", 1100);
+        log.speaking_stop("2", 2500);
+        let roster = HashMap::from([
+            ("1".to_string(), member("1", "Marina")),
+            ("2".to_string(), member("2", "Lucas")),
+        ]);
+        let words = vec![
+            word("push", 100, 500),
+            word("careful", 1300, 1700),
+            word("now", 1800, 2100),
+        ];
+        let lines = attribute_final(&log, &roster, "push careful now", &words, 0, 2500);
+        assert_eq!(lines.len(), 2);
+        assert_eq!(lines[0].speaker_label, "Marina");
+        assert_eq!(lines[1].speaker_label, "Lucas");
+        assert_eq!(lines[1].text, "careful now");
+    }
+
+    #[test]
+    fn comparable_overlap_stays_joint() {
+        // Genuine simultaneous talk: both cover the word heavily → honest joint.
+        let mut log = SpeakingLog::new();
+        log.speaking_start("1", 0);
+        log.speaking_stop("1", 2600);
+        log.speaking_start("2", 900);
+        log.speaking_stop("2", 2800);
+        let roster = HashMap::from([
+            ("1".to_string(), member("1", "Marina")),
+            ("2".to_string(), member("2", "Lucas")),
+        ]);
+        let words = vec![word("no", 1200, 1800)];
+        let lines = attribute_final(&log, &roster, "no", &words, 900, 2000);
+        assert_eq!(lines.len(), 1);
+        assert_eq!(lines[0].speaker_ids.len(), 2);
+        assert!(lines[0].speaker_label.contains('+'));
+    }
+
+    #[test]
+    fn dominant_coverage_wins() {
+        // A covers the word fully; B only clips its edge → single speaker A.
+        let mut log = SpeakingLog::new();
+        log.speaking_start("1", 0);
+        log.speaking_stop("1", 2400);
+        log.speaking_start("2", 1900);
+        log.speaking_stop("2", 3000);
+        let roster = HashMap::from([
+            ("1".to_string(), member("1", "Marina")),
+            ("2".to_string(), member("2", "Lucas")),
+        ]);
+        let words = vec![word("rotate", 1000, 2000)];
+        let lines = attribute_final(&log, &roster, "rotate", &words, 1000, 2000);
+        assert_eq!(lines.len(), 1);
         assert_eq!(lines[0].speaker_label, "Marina");
     }
 

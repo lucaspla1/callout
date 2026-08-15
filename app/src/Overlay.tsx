@@ -1,16 +1,39 @@
 // The in-game overlay: transparent, click-through window rendering only the
-// caption box and a compact who's-speaking strip. Toggled with Cmd/Ctrl+Shift+C.
+// caption box and a compact who's-speaking strip.
+// ⌘⇧C toggles visibility · ⌘⇧M unlocks move mode (drag, then ⌘⇧M again to lock).
+import { useEffect, useState } from "react";
+import { listen } from "@tauri-apps/api/event";
+import { invoke } from "@tauri-apps/api/core";
 import { useCallout } from "./useCallout";
 import "./App.css";
 
 function Overlay() {
   const { channel, members, speaking, finals, partial } = useCallout();
+  const [moveMode, setMoveMode] = useState(false);
+  const [opacity, setOpacity] = useState(0.92);
+
+  useEffect(() => {
+    invoke<number>("get_overlay_opacity").then(setOpacity).catch(() => {});
+    const unMove = listen<boolean>("overlay_move_mode", (e) => setMoveMode(e.payload));
+    const unOpacity = listen<number>("overlay_opacity", (e) => setOpacity(e.payload));
+    return () => {
+      unMove.then((f) => f());
+      unOpacity.then((f) => f());
+    };
+  }, []);
+
   const empty = finals.length === 0 && !partial;
+  const boxStyle = { background: `rgba(18, 19, 24, ${opacity})` };
 
   return (
-    <div className="overlay-root">
+    <div className={"overlay-root" + (moveMode ? " moving" : "")}>
+      {moveMode && (
+        <div className="drag-handle" data-tauri-drag-region>
+          drag to move · ⌘⇧M to lock
+        </div>
+      )}
       {channel && (
-        <div className="overlay-chips">
+        <div className="overlay-chips" style={boxStyle}>
           {[...members]
             .sort((a, b) => a.display_name.localeCompare(b.display_name))
             .map((m) => (
@@ -24,8 +47,8 @@ function Overlay() {
             ))}
         </div>
       )}
-      {!empty && (
-        <div className="captions" role="log" aria-live="polite">
+      {(!empty || moveMode) && (
+        <div className="captions" role="log" aria-live="polite" style={boxStyle}>
           {finals.map((l) => (
             <p key={l.t_start_ms + l.text} className="line">
               <b style={{ color: l.color }}>{l.speaker_label}</b>
@@ -41,6 +64,7 @@ function Overlay() {
               </span>
             </p>
           )}
+          {empty && moveMode && <p className="line dim">caption preview — captions appear here</p>}
         </div>
       )}
     </div>

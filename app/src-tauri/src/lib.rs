@@ -47,36 +47,95 @@ fn set_languages(state: tauri::State<settings::SettingsHandle>, languages: Vec<S
     state.set_languages(languages);
 }
 
-/// Toggle hotkey for the caption overlay.
+#[tauri::command]
+fn get_overlay_opacity(state: tauri::State<settings::SettingsHandle>) -> f64 {
+    state.overlay_opacity()
+}
+
+#[tauri::command]
+fn set_overlay_opacity(
+    app: AppHandle,
+    state: tauri::State<settings::SettingsHandle>,
+    opacity: f64,
+) {
+    state.set_overlay_opacity(opacity);
+    let _ = app.emit("overlay_opacity", state.overlay_opacity());
+}
+
+/// Toggle hotkey for the caption overlay; move hotkey unlocks dragging.
 const TOGGLE_SHORTCUT: &str = "CmdOrCtrl+Shift+C";
+const MOVE_SHORTCUT: &str = "CmdOrCtrl+Shift+M";
+
+static MOVE_MODE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+fn toggle_overlay(app: &AppHandle) {
+    if let Some(overlay) = app.get_webview_window("overlay") {
+        if overlay.is_visible().unwrap_or(false) {
+            let _ = overlay.hide();
+        } else {
+            let _ = overlay.show();
+        }
+    }
+}
+
+/// Move mode: makes the overlay clickable + draggable; leaving it saves the
+/// position and restores click-through.
+fn toggle_move_mode(app: &AppHandle) {
+    use std::sync::atomic::Ordering;
+    let Some(overlay) = app.get_webview_window("overlay") else { return };
+    let entering = !MOVE_MODE.load(Ordering::Relaxed);
+    MOVE_MODE.store(entering, Ordering::Relaxed);
+    if entering {
+        let _ = overlay.show();
+        let _ = overlay.set_ignore_cursor_events(false);
+        let _ = overlay.set_focus();
+    } else {
+        let _ = overlay.set_ignore_cursor_events(true);
+        if let (Ok(pos), Ok(scale)) = (overlay.outer_position(), overlay.scale_factor()) {
+            let logical = pos.to_logical::<f64>(scale);
+            if let Some(settings) = app.try_state::<settings::SettingsHandle>() {
+                settings.set_overlay_pos(logical.x, logical.y);
+            }
+        }
+    }
+    let _ = app.emit("overlay_move_mode", entering);
+}
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    use tauri_plugin_global_shortcut::{Shortcut, ShortcutState};
+    use std::str::FromStr;
+
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(
             tauri_plugin_global_shortcut::Builder::new()
-                .with_shortcuts([TOGGLE_SHORTCUT])
-                .expect("valid shortcut")
-                .with_handler(|app, _shortcut, event| {
-                    if event.state() == tauri_plugin_global_shortcut::ShortcutState::Pressed {
-                        if let Some(overlay) = app.get_webview_window("overlay") {
-                            if overlay.is_visible().unwrap_or(false) {
-                                let _ = overlay.hide();
-                            } else {
-                                let _ = overlay.show();
-                            }
-                        }
+                .with_shortcuts([TOGGLE_SHORTCUT, MOVE_SHORTCUT])
+                .expect("valid shortcuts")
+                .with_handler(|app, shortcut, event| {
+                    if event.state() != ShortcutState::Pressed {
+                        return;
+                    }
+                    let move_sc = Shortcut::from_str(MOVE_SHORTCUT).expect("valid");
+                    if shortcut == &move_sc {
+                        toggle_move_mode(app);
+                    } else {
+                        toggle_overlay(app);
                     }
                 })
                 .build(),
         )
-        .invoke_handler(tauri::generate_handler![get_languages, set_languages])
+        .invoke_handler(tauri::generate_handler![
+            get_languages,
+            set_languages,
+            get_overlay_opacity,
+            set_overlay_opacity
+        ])
         .setup(|app| {
             let data_dir = app.path().app_data_dir().unwrap_or_default();
             let settings = settings::SettingsHandle::load(data_dir);
             app.manage(settings.clone());
-            setup_overlay_window(app.handle());
+            setup_overlay_window(app.handle(), &settings);
             spawn_pipeline(app.handle().clone(), settings);
             Ok(())
         })
@@ -84,11 +143,14 @@ pub fn run() {
         .expect("error while running tauri application");
 }
 
-/// Overlay: click-through and parked bottom-center of the primary monitor.
-/// (Custom positioning/size lands with the settings UI.)
-fn setup_overlay_window(app: &AppHandle) {
+/// Overlay: click-through, at the saved position or parked bottom-center.
+fn setup_overlay_window(app: &AppHandle, settings: &settings::SettingsHandle) {
     let Some(overlay) = app.get_webview_window("overlay") else { return };
     let _ = overlay.set_ignore_cursor_events(true);
+    if let Some((x, y)) = settings.overlay_pos() {
+        let _ = overlay.set_position(tauri::LogicalPosition::new(x, y));
+        return;
+    }
     if let Ok(Some(monitor)) = overlay.primary_monitor() {
         let scale = monitor.scale_factor();
         let screen_w = monitor.size().width as f64 / scale;
@@ -200,7 +262,17 @@ fn spawn_pipeline(app: AppHandle, settings: settings::SettingsHandle) {
                         }
                         SttEvent::Final { text, words, t_start_ms, t_end_ms } => {
                             eprintln!("[callout] final: {text:?}");
-                            for line in align::attribute_final(&log, &roster, &text, &words, t_start_ms, t_end_ms) {
+                            let lines = align::attribute_final(&log, &roster, &text, &words, t_start_ms, t_end_ms);
+                            // Diagnostic while attribution 2.0 settles: when a joint
+                            // line survives, dump word timings to judge whisper's spans.
+                            if lines.iter().any(|l| l.speaker_ids.len() > 1) {
+                                let spans: Vec<String> = words
+                                    .iter()
+                                    .map(|w| format!("{}@{}-{}", w.text, w.t0_ms, w.t1_ms))
+                                    .collect();
+                                eprintln!("[align] joint survived; words: {}", spans.join(" "));
+                            }
+                            for line in lines {
                                 let _ = app.emit("caption", &line);
                             }
                         }

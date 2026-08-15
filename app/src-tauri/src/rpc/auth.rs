@@ -16,7 +16,9 @@ use super::client::{CallError, Session};
 use super::{RpcConfig, RpcStatus};
 
 const TOKEN_URL: &str = "https://discord.com/api/oauth2/token";
+#[cfg_attr(debug_assertions, allow(dead_code))]
 const KEYRING_SERVICE: &str = "app.callout.desktop";
+#[cfg_attr(debug_assertions, allow(dead_code))]
 const KEYRING_ACCOUNT: &str = "discord-oauth";
 
 #[derive(Serialize, Deserialize)]
@@ -158,23 +160,75 @@ fn now_epoch() -> u64 {
 }
 
 // Keychain access is best-effort: a failure just means re-authorizing next launch.
+//
+// Dev builds cache to a plain file instead: every recompile produces a new
+// binary identity, so the keychain would prompt "allow access?" on each launch
+// — the exact papercut this avoids. Release builds use the real keychain.
+
+#[cfg(debug_assertions)]
+mod store {
+    use super::CachedTokens;
+
+    fn path() -> Option<std::path::PathBuf> {
+        let home = std::env::var("HOME").ok()?;
+        Some(
+            std::path::PathBuf::from(home)
+                .join("Library/Application Support/app.callout.desktop/dev-tokens.json"),
+        )
+    }
+
+    pub fn load() -> Option<CachedTokens> {
+        std::fs::read_to_string(path()?).ok().and_then(|s| serde_json::from_str(&s).ok())
+    }
+
+    pub fn save(tokens: &CachedTokens) {
+        let (Some(p), Ok(json)) = (path(), serde_json::to_string(tokens)) else { return };
+        if let Some(dir) = p.parent() {
+            let _ = std::fs::create_dir_all(dir);
+        }
+        let _ = std::fs::write(p, json);
+    }
+
+    pub fn clear() {
+        if let Some(p) = path() {
+            let _ = std::fs::remove_file(p);
+        }
+    }
+}
+
+#[cfg(not(debug_assertions))]
+mod store {
+    use super::{CachedTokens, KEYRING_ACCOUNT, KEYRING_SERVICE};
+
+    pub fn load() -> Option<CachedTokens> {
+        let entry = keyring::Entry::new(KEYRING_SERVICE, KEYRING_ACCOUNT).ok()?;
+        entry.get_password().ok().and_then(|s| serde_json::from_str(&s).ok())
+    }
+
+    pub fn save(tokens: &CachedTokens) {
+        if let (Ok(entry), Ok(serialized)) = (
+            keyring::Entry::new(KEYRING_SERVICE, KEYRING_ACCOUNT),
+            serde_json::to_string(tokens),
+        ) {
+            let _ = entry.set_password(&serialized);
+        }
+    }
+
+    pub fn clear() {
+        if let Ok(entry) = keyring::Entry::new(KEYRING_SERVICE, KEYRING_ACCOUNT) {
+            let _ = entry.delete_credential();
+        }
+    }
+}
 
 fn load_cached() -> Option<CachedTokens> {
-    let entry = keyring::Entry::new(KEYRING_SERVICE, KEYRING_ACCOUNT).ok()?;
-    entry.get_password().ok().and_then(|s| serde_json::from_str(&s).ok())
+    store::load()
 }
 
 fn save_cached(tokens: &CachedTokens) {
-    if let (Ok(entry), Ok(serialized)) = (
-        keyring::Entry::new(KEYRING_SERVICE, KEYRING_ACCOUNT),
-        serde_json::to_string(tokens),
-    ) {
-        let _ = entry.set_password(&serialized);
-    }
+    store::save(tokens);
 }
 
 fn clear_cached() {
-    if let Ok(entry) = keyring::Entry::new(KEYRING_SERVICE, KEYRING_ACCOUNT) {
-        let _ = entry.delete_credential();
-    }
+    store::clear();
 }
