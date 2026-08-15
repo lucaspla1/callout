@@ -24,6 +24,30 @@ const DEFAULT_DISCORD_CLIENT_ID: &str = "1538241556560085065";
 
 const MODEL_FILE: &str = "models/whisper/ggml-small-q5_1.bin";
 
+/// Ten distinct speaker colors, assigned in arrival order; the 11th person
+/// starts reusing them. Readable on the dark caption pills.
+const SPEAKER_PALETTE: [&str; 10] = [
+    "#57F287", "#FEE75C", "#EB459E", "#5865F2", "#1ABC9C",
+    "#E67E22", "#3498DB", "#ED4245", "#B57EDC", "#F4A261",
+];
+
+#[derive(Default)]
+struct ColorAssigner {
+    assigned: HashMap<String, usize>,
+    next: usize,
+}
+
+impl ColorAssigner {
+    fn color(&mut self, user_id: &str) -> String {
+        let idx = *self.assigned.entry(user_id.to_string()).or_insert_with(|| {
+            let n = self.next;
+            self.next += 1;
+            n
+        });
+        SPEAKER_PALETTE[idx % SPEAKER_PALETTE.len()].to_string()
+    }
+}
+
 /// Status of the captions half (capture + STT), independent of the RPC status.
 #[derive(Debug, Clone, Serialize)]
 #[serde(tag = "state", rename_all = "snake_case")]
@@ -234,13 +258,27 @@ fn spawn_pipeline(app: AppHandle, settings: settings::SettingsHandle) {
     tauri::async_runtime::spawn(async move {
         let mut roster: HashMap<String, presence::Member> = HashMap::new();
         let mut log = SpeakingLog::new();
+        let mut colors = ColorAssigner::default();
         if mock {
             let _ = app.emit("status", &serde_json::json!({ "state": "mock" }));
         }
         loop {
             tokio::select! {
                 Ok(out) = rx.recv() => match out {
-                    rpc::RpcOut::Presence(ev) => {
+                    rpc::RpcOut::Presence(mut ev) => {
+                        // Session-stable per-person colors, assigned on first sight.
+                        match &mut ev {
+                            PresenceEvent::ChannelJoined { members, .. } => {
+                                for m in members.iter_mut() {
+                                    m.color = colors.color(&m.id);
+                                }
+                            }
+                            PresenceEvent::MemberJoined { member }
+                            | PresenceEvent::MemberUpdated { member } => {
+                                member.color = colors.color(&member.id);
+                            }
+                            _ => {}
+                        }
                         match &ev {
                             PresenceEvent::ChannelJoined { channel_name, members } => {
                                 eprintln!("[callout] joined '{channel_name}' with {} member(s)", members.len());

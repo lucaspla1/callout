@@ -22,10 +22,13 @@ html, body { margin: 0; background: transparent; }
 }
 .overlay-chips {
   display: flex;
+  flex-wrap: wrap;
   gap: 6px;
+  /* Same fixed column as the captions, so the two blocks line up. */
+  width: min(560px, 92vw);
   background: rgba(18, 19, 24, 0.75);
-  border-radius: 999px;
-  padding: 4px 10px;
+  border-radius: 12px;
+  padding: 5px 10px;
 }
 .overlay-root.moving {
   outline: 2px dashed #7a87f8;
@@ -120,7 +123,11 @@ html, body { margin: 0; background: transparent; }
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.chip.on { border-color: var(--c); }
+.chip.on {
+  background: var(--c);
+  border-color: var(--c);
+  color: #17181d;
+}
 .chip.muted { opacity: 0.45; text-decoration: line-through; }
 
 /* stand-in for the game behind the overlay */
