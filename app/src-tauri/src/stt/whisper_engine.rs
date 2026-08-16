@@ -135,6 +135,10 @@ pub fn spawn_worker(
                 }
             });
             let mut turbo_state = turbo.map(|(ctx, state)| (ctx, state));
+            eprintln!(
+                "[stt] finals engine: {}",
+                if turbo_state.is_some() { "large-v3-turbo (beam)" } else { "small (greedy)" }
+            );
             let _ = status_tx.send(CaptionsStatus::SttReady);
 
             let threads = std::thread::available_parallelism()
@@ -289,9 +293,32 @@ fn decode_final(
     beam: bool,
 ) -> Option<(String, Vec<Word>)> {
     run_full(state, pcm, lang, threads, true, beam)?;
-    let text = collect_text(state);
+    let text = collapse_repeats(&collect_text(state));
     let words = collect_words(state, base_ms);
     Some((text, words))
+}
+
+/// Collapse the "X. X. X." decoder-loop leak: consecutive identical sentences
+/// become one. (Doesn't touch legitimate repeats separated by other speech.)
+fn collapse_repeats(text: &str) -> String {
+    let mut out: Vec<&str> = Vec::new();
+    for part in text.split_inclusive(['.', '!', '?']) {
+        let t = part.trim().trim_end_matches(['.', '!', '?']).trim();
+        if t.is_empty() {
+            continue;
+        }
+        let dup = out
+            .last()
+            .map(|l| l.trim().trim_end_matches(['.', '!', '?']).trim().eq_ignore_ascii_case(t))
+            .unwrap_or(false);
+        if !dup {
+            out.push(part);
+        }
+    }
+    if out.is_empty() {
+        return text.trim().to_string();
+    }
+    out.join(" ").split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
 fn collect_text(state: &whisper_rs::WhisperState) -> String {
@@ -392,10 +419,17 @@ fn run_full(
     params.set_print_realtime(false);
     params.set_print_timestamps(false);
     params.set_n_threads(threads);
-    // The latency trick: shrink the encoder context to the real audio length.
-    let len_s = samples.len() as f32 / TARGET_RATE as f32;
-    let audio_ctx = ((len_s / 30.0 * 1500.0) as i32 + 128).clamp(512, 1500);
-    params.set_audio_ctx(audio_ctx);
+    // The latency trick: shrink the encoder context to the real audio length —
+    // PARTIALS ONLY. Beam-search finals get the full context: trimmed context
+    // degrades cross-attention for beams and was producing decoder loops on
+    // Portuguese ("X. X. X.").
+    if beam {
+        params.set_audio_ctx(0); // 0 = whisper default (full context)
+    } else {
+        let len_s = samples.len() as f32 / TARGET_RATE as f32;
+        let audio_ctx = ((len_s / 30.0 * 1500.0) as i32 + 128).clamp(512, 1500);
+        params.set_audio_ctx(audio_ctx);
+    }
     if token_timestamps {
         params.set_token_timestamps(true);
     }

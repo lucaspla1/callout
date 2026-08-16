@@ -24,12 +24,19 @@ html, body { margin: 0; background: transparent; }
   display: flex;
   flex-wrap: wrap;
   gap: 6px;
-  /* Same fixed column as the captions, so the two blocks line up. */
+  /* Same fixed column as the captions, so the two blocks line up.
+     No strip background — each name pill carries its own. */
   width: min(560px, 92vw);
+  background: transparent;
+  padding: 0;
+}
+.overlay-chips .chip {
   background: rgba(30, 33, 42, 0.88);
-  border: 1px solid rgba(255, 255, 255, 0.08);
-  border-radius: 12px;
-  padding: 5px 10px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+}
+.overlay-chips .chip.on {
+  background: var(--c);
+  border-color: var(--c);
 }
 .overlay-root.moving {
   outline: 2px dashed #7a87f8;
