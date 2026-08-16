@@ -78,6 +78,40 @@ fn is_low_confidence(stats: &DecodeStats) -> bool {
     (stats.no_speech_prob > 0.6 && stats.avg_logprob < -1.0) || stats.mean_p < 0.4
 }
 
+/// CALLOUT_DEBUG_AUDIO=1 → every final's PCM is dumped as a WAV next to the
+/// models, so "why did it transcribe that?" becomes listenable evidence.
+fn debug_audio_dir(model_path: &std::path::Path) -> Option<PathBuf> {
+    if std::env::var("CALLOUT_DEBUG_AUDIO").ok().as_deref() != Some("1") {
+        return None;
+    }
+    let data_root = model_path.ancestors().nth(3)?; // models/whisper/file.bin → data dir
+    let dir = data_root.join("debug-audio");
+    std::fs::create_dir_all(&dir).ok()?;
+    Some(dir)
+}
+
+fn write_wav_16k_mono(path: &std::path::Path, pcm: &[f32]) {
+    let n = pcm.len() as u32;
+    let data_bytes = n * 2;
+    let mut out = Vec::with_capacity(44 + data_bytes as usize);
+    out.extend_from_slice(b"RIFF");
+    out.extend_from_slice(&(36 + data_bytes).to_le_bytes());
+    out.extend_from_slice(b"WAVEfmt ");
+    out.extend_from_slice(&16u32.to_le_bytes());
+    out.extend_from_slice(&1u16.to_le_bytes()); // PCM
+    out.extend_from_slice(&1u16.to_le_bytes()); // mono
+    out.extend_from_slice(&16_000u32.to_le_bytes());
+    out.extend_from_slice(&32_000u32.to_le_bytes()); // byte rate
+    out.extend_from_slice(&2u16.to_le_bytes()); // block align
+    out.extend_from_slice(&16u16.to_le_bytes()); // bits
+    out.extend_from_slice(b"data");
+    out.extend_from_slice(&data_bytes.to_le_bytes());
+    for s in pcm {
+        out.extend_from_slice(&((s.clamp(-1.0, 1.0) * 32767.0) as i16).to_le_bytes());
+    }
+    let _ = std::fs::write(path, out);
+}
+
 pub fn spawn_worker(
     model_path: PathBuf,
     turbo_path: Option<PathBuf>,
@@ -181,6 +215,10 @@ pub fn spawn_worker(
                         }
                     }
                     Job::Final { pcm, t_start_ms, t_end_ms } => {
+                        if let Some(dir) = debug_audio_dir(&model_path) {
+                            write_wav_16k_mono(&dir.join(format!("utt_{t_start_ms}.wav")), &pcm);
+                        }
+                        let decode_t0 = std::time::Instant::now();
                         // Finals decode on the big model (beam search) when
                         // available; partials stay on the small one. For
                         // multi-language users, re-pick the language on the FULL
@@ -208,6 +246,12 @@ pub fn spawn_worker(
                             // previous final, a known noise hallucination, or a
                             // low-confidence decode (probability gates).
                             let stats = collect_stats(fin_state);
+                            eprintln!(
+                                "[stt] final decode: {:?} ({}, {:.1}s audio)",
+                                decode_t0.elapsed(),
+                                if beam { "turbo" } else { "small" },
+                                pcm.len() as f32 / TARGET_RATE as f32
+                            );
                             if is_low_confidence(&stats) {
                                 eprintln!(
                                     "[stt] gated final (mean_p={:.2} no_speech={:.2} logprob={:.2}): {text:?}",
@@ -457,6 +501,49 @@ mod ab_tests {
             .chunks_exact(2)
             .map(|c| i16::from_le_bytes([c[0], c[1]]) as f32 / 32768.0)
             .collect()
+    }
+
+    /// Forensic test for the "fluent but unrelated Portuguese" bug: decodes a
+    /// clean PT fixture through the EXACT production finals path (turbo, beam,
+    /// full context), then the same audio with holes punched in it (simulating
+    /// capture drops under backpressure).
+    ///   CALLOUT_AB_DIR=<fixtures> cargo test --release -- --ignored pt_finals --nocapture
+    #[test]
+    #[ignore]
+    fn pt_finals_path_forensics() {
+        let Some(dir) = std::env::var_os("CALLOUT_AB_DIR") else {
+            eprintln!("CALLOUT_AB_DIR not set; skipping");
+            return;
+        };
+        let home = std::env::var("HOME").unwrap();
+        let turbo = std::path::PathBuf::from(&home).join(
+            "Library/Application Support/app.callout.desktop/models/whisper/ggml-large-v3-turbo-q5_0.bin",
+        );
+        let ctx = WhisperContext::new_with_params(&turbo, WhisperContextParameters::default())
+            .expect("turbo model");
+        let mut state = ctx.create_state().expect("state");
+        let pcm = read_wav_16k_mono(&std::path::PathBuf::from(&dir).join("pt1.wav"));
+
+        let (clean, _) = decode_final(&mut state, &pcm, Some("pt"), 4, 0, true).expect("decode");
+        eprintln!("[forensics] clean:   {clean:?}");
+
+        // Punch holes: drop every other 80ms block — spliced audio, like a
+        // capture channel dropping blocks under backpressure.
+        let block = 1280usize; // 80ms @ 16k
+        let chopped: Vec<f32> = pcm
+            .chunks(block)
+            .enumerate()
+            .filter(|(i, _)| i % 2 == 0)
+            .flat_map(|(_, c)| c.iter().copied())
+            .collect();
+        let (holed, _) = decode_final(&mut state, &chopped, Some("pt"), 4, 0, true).expect("decode");
+        eprintln!("[forensics] chopped: {holed:?}");
+
+        let clean_lower = clean.to_lowercase();
+        assert!(
+            clean_lower.contains("cuidado") && clean_lower.contains("direita"),
+            "turbo+beam+full-ctx mangled CLEAN pt audio: {clean:?}"
+        );
     }
 
     #[test]
