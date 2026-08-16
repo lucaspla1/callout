@@ -412,9 +412,14 @@ fn spawn_pipeline(app: AppHandle, settings: settings::SettingsHandle) {
                     return;
                 }
             }
+            // Windows runs whisper on CPU (no Metal): the turbo finals model is
+            // ~2 GB of RAM and pegs cores for seconds per final there, so finals
+            // fall back to the small model. Revisit with a GPU backend (Vulkan).
+            let turbo_path =
+                if cfg!(windows) { None } else { Some(data_dir2.join(TURBO_MODEL_FILE)) };
             let (feed, mut rx) = stt::spawn_whisper(
                 data_dir2.join(MODEL_FILE),
-                Some(data_dir2.join(TURBO_MODEL_FILE)),
+                turbo_path,
                 settings2.inner.clone(),
                 cstatus2.clone(),
             );

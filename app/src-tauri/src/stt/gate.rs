@@ -31,7 +31,9 @@ impl Default for VadConfig {
             endpoint_silence_ms: 400,
             pre_roll_ms: 240,
             max_utterance_s: 12.0,
-            partial_every_ms: 600,
+            // CPU decode (Windows) can't keep the Metal cadence: each partial
+            // re-decodes the whole utterance, so pace them ~2x slower there.
+            partial_every_ms: if cfg!(windows) { 1_100 } else { 600 },
         }
     }
 }

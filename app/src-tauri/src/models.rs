@@ -48,8 +48,16 @@ pub enum ModelDl {
     AllReady,
 }
 
+/// Models this platform actually uses. Windows decodes on CPU and skips the
+/// turbo finals model (see spawn_pipeline) — don't make users download it.
+fn active() -> impl Iterator<Item = &'static ModelSpec> {
+    MODELS
+        .iter()
+        .filter(|m| cfg!(not(windows)) || m.id != "whisper-large-v3-turbo-q5_0")
+}
+
 pub fn missing(data_dir: &Path) -> Vec<&'static ModelSpec> {
-    MODELS.iter().filter(|m| !data_dir.join(m.rel_path).is_file()).collect()
+    active().filter(|m| !data_dir.join(m.rel_path).is_file()).collect()
 }
 
 /// Download every missing model, emitting progress. Returns Err after retries
@@ -58,7 +66,7 @@ pub async fn ensure_all(
     data_dir: PathBuf,
     emit: impl Fn(ModelDl) + Send + Sync + 'static,
 ) -> Result<(), String> {
-    for spec in MODELS {
+    for spec in active() {
         let dest = data_dir.join(spec.rel_path);
         if dest.is_file() {
             continue;

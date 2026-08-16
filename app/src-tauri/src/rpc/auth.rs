@@ -168,20 +168,29 @@ fn now_epoch() -> u64 {
 mod store {
     use super::CachedTokens;
 
+    /// Same directory the rest of the app uses (Tauri's app_data_dir for
+    /// identifier app.callout.desktop) — recreated here because the RPC layer
+    /// has no AppHandle. HOME is unset on Windows, which silently disabled the
+    /// cache there (re-auth on every launch).
+    fn data_dir() -> Option<std::path::PathBuf> {
+        #[cfg(windows)]
+        {
+            let roaming = std::env::var("APPDATA").ok()?;
+            Some(std::path::PathBuf::from(roaming).join("app.callout.desktop"))
+        }
+        #[cfg(not(windows))]
+        {
+            let home = std::env::var("HOME").ok()?;
+            Some(std::path::PathBuf::from(home).join("Library/Application Support/app.callout.desktop"))
+        }
+    }
+
     fn path() -> Option<std::path::PathBuf> {
-        let home = std::env::var("HOME").ok()?;
-        Some(
-            std::path::PathBuf::from(home)
-                .join("Library/Application Support/app.callout.desktop/tokens.json"),
-        )
+        Some(data_dir()?.join("tokens.json"))
     }
 
     fn legacy_path() -> Option<std::path::PathBuf> {
-        let home = std::env::var("HOME").ok()?;
-        Some(
-            std::path::PathBuf::from(home)
-                .join("Library/Application Support/app.callout.desktop/dev-tokens.json"),
-        )
+        Some(data_dir()?.join("dev-tokens.json"))
     }
 
     pub fn load() -> Option<CachedTokens> {

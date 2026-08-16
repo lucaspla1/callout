@@ -181,8 +181,11 @@ pub fn spawn_worker(
             );
             let _ = status_tx.send(CaptionsStatus::SttReady);
 
+            // Cap lower on Windows: whisper shares the CPU with the game there
+            // (macOS decodes on Metal, so its threads are cheap).
+            let max_threads = if cfg!(windows) { 4 } else { 6 };
             let threads = std::thread::available_parallelism()
-                .map(|n| n.get().saturating_sub(2).clamp(2, 6))
+                .map(|n| n.get().saturating_sub(2).clamp(2, max_threads))
                 .unwrap_or(4) as i32;
             let mut last_final = String::new();
             // Language is decided once per utterance and cached for its partials.
