@@ -214,21 +214,42 @@ html, body { margin: 0; background: transparent; }
   background: #262933;
 }
 
-/* Gray Discord-style dot with the number of simultaneous speakers. */
+/* Gray default-avatar silhouette + speaker-count corner badge. */
 .joint-badge {
-  width: 1.35em;
-  height: 1.35em;
+  position: relative;
+  width: calc(var(--cap-font, 16px) * 1.35);
+  height: calc(var(--cap-font, 16px) * 1.35);
   border-radius: 50%;
   align-self: center;
   flex: none;
   display: flex;
-  align-items: center;
+  align-items: flex-end;
   justify-content: center;
+  overflow: visible;
   background: #4a4f5c;
-  border: 1.5px solid #9ba0ae;
+  border: 1.5px solid #8b909c;
+  font-style: normal;
+}
+.joint-badge svg {
+  width: 78%;
+  height: 78%;
+  fill: #b9bec9;
+}
+.joint-count {
+  position: absolute;
+  right: -5px;
+  bottom: -3px;
+  min-width: 1.5ch;
+  padding: 0 3px;
+  border-radius: 999px;
+  background: #2a2d35;
+  border: 1px solid #8b909c;
   color: #e2e5ec;
-  font-size: 0.72em;
+  font-size: calc(var(--cap-font, 16px) * 0.55);
   font-weight: 750;
+  font-style: normal;
+  line-height: 1.45;
+  text-align: center;
 }
 
 /* Roster layout: vertical member list (Discord-overlay style), caption
