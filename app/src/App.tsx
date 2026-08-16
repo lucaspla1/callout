@@ -35,10 +35,12 @@ function App() {
   const [languages, setLanguages] = useState<string[]>([]);
   const [opacity, setOpacity] = useState(0.92);
   const [dl, setDl] = useState<{ id: string; pct: number } | null>(null);
+  const [fontPx, setFontPx] = useState(16);
 
   useEffect(() => {
     invoke<string[]>("get_languages").then(setLanguages).catch(() => {});
     invoke<number>("get_overlay_opacity").then(setOpacity).catch(() => {});
+    invoke<number>("get_caption_font").then(setFontPx).catch(() => {});
     const unDl = listen<ModelDl>("model_dl", (e) => {
       const ev = e.payload;
       if (ev.state === "progress") {
@@ -55,6 +57,11 @@ function App() {
   const changeOpacity = (value: number) => {
     setOpacity(value);
     invoke("set_overlay_opacity", { opacity: value }).catch(() => {});
+  };
+
+  const changeFont = (value: number) => {
+    setFontPx(value);
+    invoke("set_caption_font", { px: value }).catch(() => {});
   };
 
   const toggleLanguage = (code: string) => {
@@ -103,6 +110,17 @@ function App() {
             step={0.05}
             value={opacity}
             onChange={(e) => changeOpacity(Number(e.target.value))}
+          />
+        </span>
+        <span className="opacity-slider" title="Caption text size">
+          A
+          <input
+            type="range"
+            min={12}
+            max={26}
+            step={1}
+            value={fontPx}
+            onChange={(e) => changeFont(Number(e.target.value))}
           />
         </span>
         {channel ? (

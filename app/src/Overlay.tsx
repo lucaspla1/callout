@@ -11,14 +11,18 @@ function Overlay() {
   const { channel, members, speaking, finals, partial } = useCallout();
   const [moveMode, setMoveMode] = useState(false);
   const [opacity, setOpacity] = useState(0.92);
+  const [fontPx, setFontPx] = useState(16);
 
   useEffect(() => {
     invoke<number>("get_overlay_opacity").then(setOpacity).catch(() => {});
+    invoke<number>("get_caption_font").then(setFontPx).catch(() => {});
     const unMove = listen<boolean>("overlay_move_mode", (e) => setMoveMode(e.payload));
     const unOpacity = listen<number>("overlay_opacity", (e) => setOpacity(e.payload));
+    const unFont = listen<number>("caption_font", (e) => setFontPx(e.payload));
     return () => {
       unMove.then((f) => f());
       unOpacity.then((f) => f());
+      unFont.then((f) => f());
     };
   }, []);
 
@@ -28,7 +32,7 @@ function Overlay() {
   return (
     <div
       className={"overlay-root" + (moveMode ? " moving" : "")}
-      style={{ ["--cap-a" as string]: opacity }}
+      style={{ ["--cap-a" as string]: opacity, ["--cap-font" as string]: `${fontPx}px` }}
     >
       {moveMode && (
         <div className="drag-handle" data-tauri-drag-region>

@@ -14,6 +14,9 @@ pub struct Settings {
     /// Caption-box background opacity, 0.2–1.0.
     #[serde(default = "default_opacity")]
     pub overlay_opacity: f64,
+    /// Caption font size in px, 12–26.
+    #[serde(default = "default_font_px")]
+    pub caption_font_px: f64,
     /// Saved overlay position (logical px); None = bottom-center default.
     #[serde(default)]
     pub overlay_pos: Option<(f64, f64)>,
@@ -23,9 +26,18 @@ fn default_opacity() -> f64 {
     0.92
 }
 
+fn default_font_px() -> f64 {
+    16.0
+}
+
 impl Default for Settings {
     fn default() -> Self {
-        Self { languages: Vec::new(), overlay_opacity: default_opacity(), overlay_pos: None }
+        Self {
+            languages: Vec::new(),
+            overlay_opacity: default_opacity(),
+            caption_font_px: default_font_px(),
+            overlay_pos: None,
+        }
     }
 }
 
@@ -59,6 +71,14 @@ impl SettingsHandle {
 
     pub fn set_overlay_opacity(&self, opacity: f64) {
         self.mutate(|s| s.overlay_opacity = opacity.clamp(0.2, 1.0));
+    }
+
+    pub fn caption_font_px(&self) -> f64 {
+        self.inner.read().map(|s| s.caption_font_px).unwrap_or(16.0)
+    }
+
+    pub fn set_caption_font_px(&self, px: f64) {
+        self.mutate(|s| s.caption_font_px = px.clamp(12.0, 26.0));
     }
 
     pub fn overlay_pos(&self) -> Option<(f64, f64)> {

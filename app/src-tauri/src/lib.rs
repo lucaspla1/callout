@@ -85,6 +85,17 @@ fn toggle_move_overlay(app: AppHandle) {
 }
 
 #[tauri::command]
+fn get_caption_font(state: tauri::State<settings::SettingsHandle>) -> f64 {
+    state.caption_font_px()
+}
+
+#[tauri::command]
+fn set_caption_font(app: AppHandle, state: tauri::State<settings::SettingsHandle>, px: f64) {
+    state.set_caption_font_px(px);
+    let _ = app.emit("caption_font", state.caption_font_px());
+}
+
+#[tauri::command]
 fn set_overlay_opacity(
     app: AppHandle,
     state: tauri::State<settings::SettingsHandle>,
@@ -164,6 +175,8 @@ pub fn run() {
             set_languages,
             get_overlay_opacity,
             set_overlay_opacity,
+            get_caption_font,
+            set_caption_font,
             toggle_move_overlay
         ])
         .setup(|app| {

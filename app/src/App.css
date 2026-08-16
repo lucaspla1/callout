@@ -155,7 +155,7 @@ html, body { margin: 0; background: transparent; }
   /* Fixed column: lines never grow sideways as someone talks — long text
      wraps downward inside its pill instead. */
   width: min(560px, 92vw);
-  font-size: 16px;
+  font-size: var(--cap-font, 16px);
   line-height: 1.5;
   background: transparent;
 }
