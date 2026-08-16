@@ -14,9 +14,7 @@ pub mod pipeline;
 pub mod coreaudio;
 
 #[cfg(windows)]
-pub mod wasapi {
-    //! TODO(M2.5): WASAPI process loopback per docs/dev/audio-capture.md §1.
-}
+pub mod wasapi_win;
 
 pub const TARGET_RATE: u32 = 16_000;
 /// 20 ms @ 16 kHz — least-common-denominator frame for the VAD/STT consumers.
@@ -41,9 +39,18 @@ pub fn spawn(
     coreaudio::spawn_supervisor("com.hnc.Discord", now_ms, status_tx, sink);
 }
 
-#[cfg(not(target_os = "macos"))]
+#[cfg(windows)]
 pub fn spawn(
-    _now_ms: impl Fn() -> u64 + Send + Sync + 'static,
+    now_ms: impl Fn() -> u64 + Send + Sync + Clone + 'static,
+    status_tx: tokio::sync::mpsc::UnboundedSender<crate::CaptionsStatus>,
+    sink: impl FnMut(PcmChunk) + Send + 'static,
+) {
+    wasapi_win::spawn_supervisor(now_ms, status_tx, sink);
+}
+
+#[cfg(not(any(target_os = "macos", windows)))]
+pub fn spawn(
+    _now_ms: impl Fn() -> u64 + Send + Sync + Clone + 'static,
     status_tx: tokio::sync::mpsc::UnboundedSender<crate::CaptionsStatus>,
     _sink: impl FnMut(PcmChunk) + Send + 'static,
 ) {
