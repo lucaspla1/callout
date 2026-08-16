@@ -371,6 +371,9 @@ fn spawn_pipeline(app: AppHandle, settings: settings::SettingsHandle) {
         let mut roster: HashMap<String, presence::Member> = HashMap::new();
         let mut log = SpeakingLog::new();
         let mut colors = ColorAssigner::default();
+        // The local user's own voice is never in the captured audio (Discord
+        // doesn't play your mic back) — exclude them from attribution.
+        let mut self_id: Option<String> = None;
         if mock {
             let _ = app.emit("status", &serde_json::json!({ "state": "mock" }));
         }
@@ -407,8 +410,20 @@ fn spawn_pipeline(app: AppHandle, settings: settings::SettingsHandle) {
                             PresenceEvent::MemberLeft { user_id } => {
                                 roster.remove(user_id);
                             }
-                            PresenceEvent::SpeakingStart { user_id, at_ms } => log.speaking_start(user_id, *at_ms),
-                            PresenceEvent::SpeakingStop { user_id, at_ms } => log.speaking_stop(user_id, *at_ms),
+                            PresenceEvent::SelfIdentified { user_id } => {
+                                eprintln!("[callout] local user: {user_id} (excluded from attribution)");
+                                self_id = Some(user_id.clone());
+                            }
+                            PresenceEvent::SpeakingStart { user_id, at_ms } => {
+                                if self_id.as_deref() != Some(user_id.as_str()) {
+                                    log.speaking_start(user_id, *at_ms);
+                                }
+                            }
+                            PresenceEvent::SpeakingStop { user_id, at_ms } => {
+                                if self_id.as_deref() != Some(user_id.as_str()) {
+                                    log.speaking_stop(user_id, *at_ms);
+                                }
+                            }
                         }
                         let _ = app.emit("presence", &ev);
                     }

@@ -20,6 +20,10 @@ pub struct Member {
 #[derive(Debug, Clone, Serialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum PresenceEvent {
+    /// The local user's Discord id (from the RPC READY handshake). The local
+    /// user's own voice never appears in the captured audio (Discord doesn't
+    /// play your mic back), so attribution must exclude them.
+    SelfIdentified { user_id: String },
     ChannelJoined { channel_name: String, members: Vec<Member> },
     ChannelLeft,
     MemberJoined { member: Member },

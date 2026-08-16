@@ -12,6 +12,7 @@ export type Member = {
 };
 
 export type PresenceEvent =
+  | { type: "self_identified"; user_id: string }
   | { type: "channel_joined"; channel_name: string; members: Member[] }
   | { type: "channel_left" }
   | { type: "member_joined"; member: Member }
@@ -90,6 +91,8 @@ export function useCallout() {
     const unPresence = listen<PresenceEvent>("presence", (e) => {
       const ev = e.payload;
       switch (ev.type) {
+        case "self_identified":
+          break; // attribution-side concern; chips still light for the local user
         case "channel_joined":
           setChannel(ev.channel_name);
           setMembers(ev.members);

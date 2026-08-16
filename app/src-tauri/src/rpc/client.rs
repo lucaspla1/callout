@@ -83,9 +83,14 @@ async fn session<S: AsyncRead + AsyncWrite + Unpin>(
         .unwrap_or("cdn.discordapp.com")
         .to_string();
 
+    let self_id = ready.pointer("/data/user/id").and_then(|v| v.as_str()).map(String::from);
+
     let mut sess = Session { conn, tx, dispatch_q: VecDeque::new(), cdn_host };
 
     let username = auth::ensure_token(&mut sess, cfg).await?;
+    if let Some(user_id) = self_id {
+        sess.emit(PresenceEvent::SelfIdentified { user_id });
+    }
     sess.emit_status(RpcStatus::Ready { username });
 
     // Subscribe dance (§3.4): channel tracking first, then the current channel if any.
