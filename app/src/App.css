@@ -173,7 +173,10 @@ html, body { margin: 0; background: transparent; }
   gap: 10px;
   align-items: baseline;
   margin: 0;
-  width: 100%;
+  /* Dynamic: the pill hugs short lines ("Sim") and wraps long ones at the
+     column cap. Partials keep full width so the growing text doesn't jitter. */
+  width: fit-content;
+  max-width: 100%;
   /* Slightly blue-lifted ground + hairline so pills separate from dark
      game/app backgrounds instead of melting into them. */
   background: rgba(30, 33, 42, var(--cap-a, 0.92));
@@ -198,8 +201,19 @@ html, body { margin: 0; background: transparent; }
   display: inline-block;
   vertical-align: bottom;
 }
+.line.partial { width: 100%; }
 .line.partial span { opacity: 0.75; }
 .line.dim { color: #9ba0ae; font-style: italic; }
+
+.cap-avatar {
+  width: 1.35em;
+  height: 1.35em;
+  border-radius: 50%;
+  align-self: center;
+  flex: none;
+  border: 1.5px solid var(--lc);
+  background: #262933;
+}
 
 .caret {
   display: inline-block;

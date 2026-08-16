@@ -2,7 +2,11 @@ import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { useCallout, type CaptionsStatus, type ModelDl, type Status } from "./useCallout";
+import { SpeakerIdentity, type IdentityMode } from "./SpeakerIdentity";
 import "./App.css";
+
+const IDENTITY_CYCLE: IdentityMode[] = ["name", "avatar", "both"];
+const IDENTITY_LABEL: Record<IdentityMode, string> = { name: "Aa", avatar: "◉", both: "◉Aa" };
 
 const LANGUAGES = [
   { code: "en", label: "EN" },
@@ -36,11 +40,19 @@ function App() {
   const [opacity, setOpacity] = useState(0.92);
   const [dl, setDl] = useState<{ id: string; pct: number } | null>(null);
   const [fontPx, setFontPx] = useState(16);
+  const [identity, setIdentity] = useState<IdentityMode>("name");
+
+  const cycleIdentity = () => {
+    const next = IDENTITY_CYCLE[(IDENTITY_CYCLE.indexOf(identity) + 1) % IDENTITY_CYCLE.length];
+    setIdentity(next);
+    invoke("set_caption_identity", { mode: next }).catch(() => {});
+  };
 
   useEffect(() => {
     invoke<string[]>("get_languages").then(setLanguages).catch(() => {});
     invoke<number>("get_overlay_opacity").then(setOpacity).catch(() => {});
     invoke<number>("get_caption_font").then(setFontPx).catch(() => {});
+    invoke<IdentityMode>("get_caption_identity").then(setIdentity).catch(() => {});
     const unDl = listen<ModelDl>("model_dl", (e) => {
       const ev = e.payload;
       if (ev.state === "progress") {
@@ -101,6 +113,13 @@ function App() {
           onClick={() => invoke("toggle_move_overlay").catch(() => {})}
         >
           ✥ move
+        </button>
+        <button
+          className="lang"
+          title="Speaker identity on captions: name / avatar / both"
+          onClick={cycleIdentity}
+        >
+          {IDENTITY_LABEL[identity]}
         </button>
         <span className="opacity-slider" title="Overlay background opacity">
           <input
@@ -167,13 +186,13 @@ function App() {
         <div className="captions" role="log" aria-live="polite">
           {finals.map((l) => (
             <p key={l.t_start_ms + l.text} className="line" style={{ ["--lc" as string]: l.color }}>
-              <b style={{ color: l.color }}>{l.speaker_label}</b>
+              <SpeakerIdentity line={l} members={members} mode={identity} />
               <span>{l.text}</span>
             </p>
           ))}
           {partial && (
             <p className="line partial" style={{ ["--lc" as string]: partial.color }}>
-              <b style={{ color: partial.color }}>{partial.speaker_label}</b>
+              <SpeakerIdentity line={partial} members={members} mode={identity} />
               <span>
                 {partial.text}
                 <i className="caret" />

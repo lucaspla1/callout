@@ -91,6 +91,21 @@ fn get_caption_font(state: tauri::State<settings::SettingsHandle>) -> f64 {
 }
 
 #[tauri::command]
+fn get_caption_identity(state: tauri::State<settings::SettingsHandle>) -> String {
+    state.caption_identity()
+}
+
+#[tauri::command]
+fn set_caption_identity(
+    app: AppHandle,
+    state: tauri::State<settings::SettingsHandle>,
+    mode: String,
+) {
+    state.set_caption_identity(mode);
+    let _ = app.emit("caption_identity", state.caption_identity());
+}
+
+#[tauri::command]
 fn set_caption_font(app: AppHandle, state: tauri::State<settings::SettingsHandle>, px: f64) {
     state.set_caption_font_px(px);
     let _ = app.emit("caption_font", state.caption_font_px());
@@ -178,6 +193,8 @@ pub fn run() {
             set_overlay_opacity,
             get_caption_font,
             set_caption_font,
+            get_caption_identity,
+            set_caption_identity,
             toggle_move_overlay
         ])
         .setup(|app| {

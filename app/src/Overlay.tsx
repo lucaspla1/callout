@@ -5,6 +5,7 @@ import { useEffect, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
 import { invoke } from "@tauri-apps/api/core";
 import { useCallout } from "./useCallout";
+import { SpeakerIdentity, type IdentityMode } from "./SpeakerIdentity";
 import "./App.css";
 
 function Overlay() {
@@ -12,17 +13,21 @@ function Overlay() {
   const [moveMode, setMoveMode] = useState(false);
   const [opacity, setOpacity] = useState(0.92);
   const [fontPx, setFontPx] = useState(16);
+  const [identity, setIdentity] = useState<IdentityMode>("name");
 
   useEffect(() => {
     invoke<number>("get_overlay_opacity").then(setOpacity).catch(() => {});
     invoke<number>("get_caption_font").then(setFontPx).catch(() => {});
+    invoke<IdentityMode>("get_caption_identity").then(setIdentity).catch(() => {});
     const unMove = listen<boolean>("overlay_move_mode", (e) => setMoveMode(e.payload));
     const unOpacity = listen<number>("overlay_opacity", (e) => setOpacity(e.payload));
     const unFont = listen<number>("caption_font", (e) => setFontPx(e.payload));
+    const unIdentity = listen<IdentityMode>("caption_identity", (e) => setIdentity(e.payload));
     return () => {
       unMove.then((f) => f());
       unOpacity.then((f) => f());
       unFont.then((f) => f());
+      unIdentity.then((f) => f());
     };
   }, []);
 
@@ -57,13 +62,13 @@ function Overlay() {
         <div className="captions" role="log" aria-live="polite">
           {finals.map((l) => (
             <p key={l.t_start_ms + l.text} className="line" style={{ ["--lc" as string]: l.color }}>
-              <b style={{ color: l.color }}>{l.speaker_label}</b>
+              <SpeakerIdentity line={l} members={members} mode={identity} />
               <span>{l.text}</span>
             </p>
           ))}
           {partial && (
             <p className="line partial" style={{ ["--lc" as string]: partial.color }}>
-              <b style={{ color: partial.color }}>{partial.speaker_label}</b>
+              <SpeakerIdentity line={partial} members={members} mode={identity} />
               <span>
                 {partial.text}
                 <i className="caret" />

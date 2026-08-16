@@ -17,6 +17,9 @@ pub struct Settings {
     /// Caption font size in px, 12–26.
     #[serde(default = "default_font_px")]
     pub caption_font_px: f64,
+    /// How speaker identity renders on caption lines: "name" | "avatar" | "both".
+    #[serde(default = "default_identity")]
+    pub caption_identity: String,
     /// Saved overlay position (logical px); None = bottom-center default.
     #[serde(default)]
     pub overlay_pos: Option<(f64, f64)>,
@@ -30,12 +33,17 @@ fn default_font_px() -> f64 {
     16.0
 }
 
+fn default_identity() -> String {
+    "name".to_string()
+}
+
 impl Default for Settings {
     fn default() -> Self {
         Self {
             languages: Vec::new(),
             overlay_opacity: default_opacity(),
             caption_font_px: default_font_px(),
+            caption_identity: default_identity(),
             overlay_pos: None,
         }
     }
@@ -79,6 +87,18 @@ impl SettingsHandle {
 
     pub fn set_caption_font_px(&self, px: f64) {
         self.mutate(|s| s.caption_font_px = px.clamp(12.0, 26.0));
+    }
+
+    pub fn caption_identity(&self) -> String {
+        self.inner.read().map(|s| s.caption_identity.clone()).unwrap_or_else(|_| "name".into())
+    }
+
+    pub fn set_caption_identity(&self, mode: String) {
+        let mode = match mode.as_str() {
+            "avatar" | "both" => mode,
+            _ => "name".to_string(),
+        };
+        self.mutate(|s| s.caption_identity = mode);
     }
 
     pub fn overlay_pos(&self) -> Option<(f64, f64)> {
