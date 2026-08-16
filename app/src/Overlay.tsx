@@ -27,7 +27,6 @@ function Overlay() {
   }, []);
 
   const empty = finals.length === 0 && !partial;
-  const boxStyle = { background: `rgba(18, 19, 24, ${opacity})` };
 
   return (
     <div
@@ -40,7 +39,7 @@ function Overlay() {
         </div>
       )}
       {channel && (
-        <div className="overlay-chips" style={boxStyle}>
+        <div className="overlay-chips">
           {[...members]
             .sort((a, b) => a.display_name.localeCompare(b.display_name))
             .map((m) => (
