@@ -213,7 +213,17 @@ pub fn spawn_worker(
                 }
                 match job {
                     Job::Partial { pcm, t_start_ms } => {
-                        if let Some(text) = decode(&mut state, &pcm, utt_lang.as_deref(), threads) {
+                        // CPU decode (Windows): a partial re-decodes the whole
+                        // utterance, so long monologues fall behind realtime.
+                        // Decode only the trailing window there — the final
+                        // still gets the full utterance.
+                        let pcm: &[f32] = if cfg!(windows) {
+                            const TAIL: usize = 6 * TARGET_RATE as usize;
+                            &pcm[pcm.len().saturating_sub(TAIL)..]
+                        } else {
+                            &pcm
+                        };
+                        if let Some(text) = decode(&mut state, pcm, utt_lang.as_deref(), threads) {
                             let stats = collect_stats(&state);
                             if !text.is_empty()
                                 && !is_known_hallucination(&text)

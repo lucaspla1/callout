@@ -31,3 +31,68 @@ jobs:
           name: unmute-windows-setup
           path: app/src-tauri/target/release/bundle/nsis/*.exe
           if-no-files-found: error
+
+  # Install-experience QA on a real Windows machine: silent install, smoke
+  # launch (no Discord), full pipeline in mock mode, clean uninstall. A build
+  # only ships to a human after this gate is green.
+  windows-qa:
+    needs: windows-installer
+    runs-on: windows-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: unmute-windows-setup
+          path: installer
+      - name: Silent install
+        shell: pwsh
+        run: |
+          $exe = (Get-ChildItem installer\*.exe)[0].FullName
+          $p = Start-Process $exe -ArgumentList '/S' -Wait -PassThru
+          if ($p.ExitCode -ne 0) { throw "installer exit code $($p.ExitCode)" }
+          if (-not (Test-Path "$env:LOCALAPPDATA\Unmute\Unmute.exe")) { throw "Unmute.exe missing after install" }
+          if (-not (Get-ItemProperty "HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\*" |
+              Where-Object DisplayName -like 'Unmute*')) { throw "no Add/Remove Programs entry" }
+          "install OK"
+      - name: Smoke launch — real mode, no Discord present
+        shell: pwsh
+        run: |
+          $log = "$env:RUNNER_TEMP\unmute-real.log"
+          $p = Start-Process "$env:LOCALAPPDATA\Unmute\Unmute.exe" -RedirectStandardError $log -PassThru
+          Start-Sleep 25
+          $alive = -not $p.HasExited
+          if ($alive) { Stop-Process $p -Force }
+          "---- stderr (real mode) ----"
+          if (Test-Path $log) { Get-Content $log }
+          if (-not $alive) { throw "app exited early in real mode (code $($p.ExitCode)) - should idle waiting for Discord" }
+          "smoke launch OK - app idles without Discord"
+      - name: Pipeline QA — mock mode end to end
+        shell: pwsh
+        run: |
+          $log = "$env:RUNNER_TEMP\unmute-mock.log"
+          $env:CALLOUT_MOCK = "1"
+          $p = Start-Process "$env:LOCALAPPDATA\Unmute\Unmute.exe" -RedirectStandardError $log -PassThru
+          Start-Sleep 30
+          $alive = -not $p.HasExited
+          if ($alive) { Stop-Process $p -Force }
+          "---- stderr (mock mode) ----"
+          $text = ""
+          if (Test-Path $log) { $text = Get-Content $log -Raw; $text }
+          if (-not $alive) { throw "app exited early in mock mode (code $($p.ExitCode))" }
+          if ($text -notmatch "Duo Q") { throw "mock presence never joined a channel" }
+          if ($text -notmatch "final:") { throw "no caption finals flowed through the pipeline" }
+          "pipeline OK - presence + captions flow on Windows"
+      - name: Silent uninstall + clean check
+        shell: pwsh
+        run: |
+          $u = "$env:LOCALAPPDATA\Unmute\uninstall.exe"
+          Start-Process $u -ArgumentList '/S' -Wait
+          Start-Sleep 5
+          if (Test-Path "$env:LOCALAPPDATA\Unmute\Unmute.exe") { throw "uninstall left binaries behind" }
+          "uninstall OK"
+      - name: Upload QA logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-qa-logs
+          path: ${{ runner.temp }}/unmute-*.log
+          if-no-files-found: ignore
