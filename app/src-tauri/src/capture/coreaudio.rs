@@ -72,6 +72,27 @@ extern "C" fn io_proc(
     Default::default()
 }
 
+/// Built-in output if present (rock-steady clock), else the default output.
+fn stable_clock_uid() -> Result<(cidre::arc::R<cf::String>, String), String> {
+    if let Ok(devices) = ca::System::devices() {
+        for d in devices {
+            let built_in = d
+                .transport_type()
+                .map(|t| t == ca::DeviceTransportType::BUILT_IN)
+                .unwrap_or(false);
+            let has_output = d.asbd(ca::PropScope::OUTPUT).is_ok();
+            if built_in && has_output {
+                if let Ok(uid) = d.uid() {
+                    return Ok((uid, "built-in output".into()));
+                }
+            }
+        }
+    }
+    let dev = ca::System::default_output_device().map_err(|e| format!("default output: {e:?}"))?;
+    let uid = dev.uid().map_err(|e| format!("output uid: {e:?}"))?;
+    Ok((uid, "default output (no built-in found)".into()))
+}
+
 fn discord_process_ids(bundle_prefix: &str, verbose: bool) -> Vec<u32> {
     let Ok(procs) = ca::System::processes() else { return Vec::new() };
     let mut ids: Vec<u32> = procs
@@ -130,9 +151,12 @@ fn run_session(
         native_rate, channels, asbd.format, asbd.format_flags, asbd.bits_per_channel
     );
 
-    let output_device =
-        ca::System::default_output_device().map_err(|e| format!("default output: {e:?}"))?;
-    let output_uid = output_device.uid().map_err(|e| format!("output uid: {e:?}"))?;
+    // Clock the aggregate off a STABLE device. Bluetooth default outputs make
+    // aggregate IO erratic → the tap delivers speech shredded with silence
+    // holes → whisper confabulates fluent nonsense (the evidence: debug-audio
+    // WAVs with 30–75% silent blocks while the default output was a BT headset).
+    let (output_uid, clock_label) = stable_clock_uid()?;
+    eprintln!("[capture] aggregate clock: {clock_label}");
     let sub_device =
         cf::DictionaryOf::with_keys_values(&[sub_keys::uid()], &[output_uid.as_type_ref()]);
     let tap_uid = tap.uid().map_err(|e| format!("tap uid: {e:?}"))?;
