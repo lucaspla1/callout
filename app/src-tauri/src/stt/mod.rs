@@ -7,7 +7,7 @@
 pub mod fbank;
 mod gate;
 pub mod voiceid;
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", windows))]
 mod whisper_engine;
 
 use serde::Serialize;
@@ -65,8 +65,9 @@ impl SttFeed {
 /// Spawn the whisper pipeline: returns the capture-side feeder and the caption
 /// event stream. Model load happens on the worker thread (status events tell
 /// the UI). `languages` is read per utterance: empty = auto, one = pin,
-/// several = auto restricted to that set. macOS-only until the Windows backend lands.
-#[cfg(target_os = "macos")]
+/// several = auto restricted to that set. Metal on macOS; CPU on Windows for
+/// now (Vulkan-on-iGPU is a tuning follow-up).
+#[cfg(any(target_os = "macos", windows))]
 pub fn spawn_whisper(
     model_path: std::path::PathBuf,
     languages: std::sync::Arc<std::sync::RwLock<crate::settings::Settings>>,
@@ -78,7 +79,7 @@ pub fn spawn_whisper(
     (SttFeed { gate: gate::Gate::new(job_tx) }, event_rx)
 }
 
-#[cfg(not(target_os = "macos"))]
+#[cfg(not(any(target_os = "macos", windows)))]
 pub fn spawn_whisper(
     _model_path: std::path::PathBuf,
     _languages: std::sync::Arc<std::sync::RwLock<crate::settings::Settings>>,

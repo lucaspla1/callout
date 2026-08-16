@@ -41,3 +41,4 @@ whisper-rs = { version = "0.16.0", features = ["metal"] }
 [target."cfg(windows)".dependencies]
 sysinfo = { version = "0.38", default-features = false, features = ["system"] }
 wasapi = "0.24"
+whisper-rs = "0.16"
