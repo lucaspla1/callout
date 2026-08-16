@@ -24,6 +24,7 @@ use crate::stt::{MockStt, SttEvent};
 const DEFAULT_DISCORD_CLIENT_ID: &str = "1538241556560085065";
 
 const MODEL_FILE: &str = "models/whisper/ggml-small-q5_1.bin";
+const TURBO_MODEL_FILE: &str = "models/whisper/ggml-large-v3-turbo-q5_0.bin";
 const SPEAKER_MODEL_FILE: &str = "models/speaker/wespeaker_en_voxceleb_resnet34_LM.onnx";
 
 /// Ten distinct speaker colors, assigned in arrival order; the 11th person
@@ -340,6 +341,7 @@ fn spawn_pipeline(app: AppHandle, settings: settings::SettingsHandle) {
             }
             let (feed, mut rx) = stt::spawn_whisper(
                 data_dir2.join(MODEL_FILE),
+                Some(data_dir2.join(TURBO_MODEL_FILE)),
                 settings2.inner.clone(),
                 cstatus2.clone(),
             );

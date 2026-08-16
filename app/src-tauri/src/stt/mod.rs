@@ -70,18 +70,20 @@ impl SttFeed {
 #[cfg(any(target_os = "macos", windows))]
 pub fn spawn_whisper(
     model_path: std::path::PathBuf,
+    turbo_path: Option<std::path::PathBuf>,
     languages: std::sync::Arc<std::sync::RwLock<crate::settings::Settings>>,
     status_tx: tokio::sync::mpsc::UnboundedSender<CaptionsStatus>,
 ) -> (SttFeed, mpsc::UnboundedReceiver<SttEvent>) {
     let (event_tx, event_rx) = mpsc::unbounded_channel();
     let (job_tx, job_rx) = crossbeam_channel::bounded::<Job>(4);
-    whisper_engine::spawn_worker(model_path, languages, job_rx, event_tx, status_tx);
+    whisper_engine::spawn_worker(model_path, turbo_path, languages, job_rx, event_tx, status_tx);
     (SttFeed { gate: gate::Gate::new(job_tx) }, event_rx)
 }
 
 #[cfg(not(any(target_os = "macos", windows)))]
 pub fn spawn_whisper(
     _model_path: std::path::PathBuf,
+    _turbo_path: Option<std::path::PathBuf>,
     _languages: std::sync::Arc<std::sync::RwLock<crate::settings::Settings>>,
     status_tx: tokio::sync::mpsc::UnboundedSender<CaptionsStatus>,
 ) -> (SttFeed, mpsc::UnboundedReceiver<SttEvent>) {

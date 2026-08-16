@@ -80,6 +80,7 @@ fn is_low_confidence(stats: &DecodeStats) -> bool {
 
 pub fn spawn_worker(
     model_path: PathBuf,
+    turbo_path: Option<PathBuf>,
     settings: Arc<RwLock<Settings>>,
     job_rx: crossbeam_channel::Receiver<Job>,
     event_tx: tokio::sync::mpsc::UnboundedSender<SttEvent>,
@@ -111,6 +112,29 @@ pub fn spawn_worker(
                     return;
                 }
             };
+            // Second, bigger context for finals: partials stay fast on the small
+            // model, finals get re-decoded on large-v3-turbo with beam search —
+            // the biggest available quality jump for pt/es. Falls back to the
+            // small model when the file is absent or fails to load.
+            let turbo = turbo_path.filter(|p| p.is_file()).and_then(|p| {
+                let t0 = std::time::Instant::now();
+                match WhisperContext::new_with_params(&p, WhisperContextParameters::default())
+                    .and_then(|c| {
+                        // Keep the context alive alongside its state.
+                        let s = c.create_state()?;
+                        Ok((c, s))
+                    }) {
+                    Ok(pair) => {
+                        eprintln!("[stt] finals model loaded in {:?}", t0.elapsed());
+                        Some(pair)
+                    }
+                    Err(e) => {
+                        eprintln!("[stt] finals model failed to load ({e}); using small for finals");
+                        None
+                    }
+                }
+            });
+            let mut turbo_state = turbo.map(|(ctx, state)| (ctx, state));
             let _ = status_tx.send(CaptionsStatus::SttReady);
 
             let threads = std::thread::available_parallelism()
@@ -153,15 +177,33 @@ pub fn spawn_worker(
                         }
                     }
                     Job::Final { pcm, t_start_ms, t_end_ms } => {
+                        // Finals decode on the big model (beam search) when
+                        // available; partials stay on the small one. For
+                        // multi-language users, re-pick the language on the FULL
+                        // utterance — more audio = reliable detection.
+                        let (fin_state, beam) = match turbo_state.as_mut() {
+                            Some((_ctx, s)) => (s, true),
+                            None => (&mut state, false),
+                        };
+                        let allowed =
+                            settings.read().map(|s| s.languages.clone()).unwrap_or_default();
+                        if allowed.len() > 1 {
+                            utt_lang = choose_language(fin_state, &pcm, &allowed, threads);
+                        }
                         // Finals also collect word timings (proven not to change
                         // the text — see ab_tests below) for per-word attribution.
-                        if let Some((text, words)) =
-                            decode_final(&mut state, &pcm, utt_lang.as_deref(), threads, t_start_ms)
-                        {
+                        if let Some((text, words)) = decode_final(
+                            fin_state,
+                            &pcm,
+                            utt_lang.as_deref(),
+                            threads,
+                            t_start_ms,
+                            beam,
+                        ) {
                             // Hallucination guards: empty, exact repeat of the
                             // previous final, a known noise hallucination, or a
                             // low-confidence decode (probability gates).
-                            let stats = collect_stats(&state);
+                            let stats = collect_stats(fin_state);
                             if is_low_confidence(&stats) {
                                 eprintln!(
                                     "[stt] gated final (mean_p={:.2} no_speech={:.2} logprob={:.2}): {text:?}",
@@ -231,21 +273,22 @@ fn decode(
     lang: Option<&str>,
     threads: i32,
 ) -> Option<String> {
-    run_full(state, pcm, lang, threads, false)?;
+    run_full(state, pcm, lang, threads, false, false)?;
     Some(collect_text(state))
 }
 
-/// Final decode: same text as `decode` (verified by ab_tests), plus word spans
-/// on the shared clock. `words` comes back empty if timings look degenerate —
-/// callers fall back to whole-utterance attribution.
+/// Final decode: word timings on the shared clock (empty if degenerate →
+/// whole-utterance attribution fallback), optionally with beam search when
+/// running on the big finals model.
 fn decode_final(
     state: &mut whisper_rs::WhisperState,
     pcm: &[f32],
     lang: Option<&str>,
     threads: i32,
     base_ms: u64,
+    beam: bool,
 ) -> Option<(String, Vec<Word>)> {
-    run_full(state, pcm, lang, threads, true)?;
+    run_full(state, pcm, lang, threads, true, beam)?;
     let text = collect_text(state);
     let words = collect_words(state, base_ms);
     Some((text, words))
@@ -316,6 +359,7 @@ fn run_full(
     lang: Option<&str>,
     threads: i32,
     token_timestamps: bool,
+    beam: bool,
 ) -> Option<()> {
     let mut padded;
     let samples = if pcm.len() < MIN_SAMPLES {
@@ -326,7 +370,13 @@ fn run_full(
         pcm
     };
 
-    let mut params = FullParams::new(SamplingStrategy::Greedy { best_of: 1 });
+    // Beam search on finals (quality); greedy on partials (speed).
+    let strategy = if beam {
+        SamplingStrategy::BeamSearch { beam_size: 5, patience: 1.0 }
+    } else {
+        SamplingStrategy::Greedy { best_of: 1 }
+    };
+    let mut params = FullParams::new(strategy);
     params.set_language(Some(lang.unwrap_or("auto")));
     params.set_no_context(true);
     params.set_single_segment(true);

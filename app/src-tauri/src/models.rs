@@ -25,6 +25,12 @@ pub const MODELS: &[ModelSpec] = &[
         approx_bytes: 190_085_487,
     },
     ModelSpec {
+        id: "whisper-large-v3-turbo-q5_0",
+        rel_path: "models/whisper/ggml-large-v3-turbo-q5_0.bin",
+        url: "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-large-v3-turbo-q5_0.bin",
+        approx_bytes: 574_041_195,
+    },
+    ModelSpec {
         id: "speaker-wespeaker-resnet34",
         rel_path: "models/speaker/wespeaker_en_voxceleb_resnet34_LM.onnx",
         // Upstream release tag really is spelled "recongition".
