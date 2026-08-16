@@ -33,11 +33,49 @@ fn is_known_hallucination(text: &str) -> bool {
         "obrigado por assistir",
         "obrigada por assistir",
         "gracias por ver",
-        "subtitles by the amaraorg",
         "legendas pela comunidade",
+        "subtítulos realizados por",
+        "subtitulos realizados por",
         "sous-titres",
     ];
-    PREFIXES.iter().any(|p| norm.starts_with(p))
+    // Subtitle-credit hallucinations mention amara.org anywhere in the line.
+    norm.contains("amaraorg") || PREFIXES.iter().any(|p| norm.starts_with(p))
+}
+
+/// Aggregate token statistics for hallucination gating (skips special tokens).
+struct DecodeStats {
+    mean_p: f32,
+    avg_logprob: f32,
+    no_speech_prob: f32,
+}
+
+fn collect_stats(state: &whisper_rs::WhisperState) -> DecodeStats {
+    let (mut sum_p, mut sum_plog, mut n) = (0.0f32, 0.0f32, 0u32);
+    let mut no_speech = 0.0f32;
+    for s in 0..state.full_n_segments() {
+        let Some(seg) = state.get_segment(s) else { continue };
+        no_speech = no_speech.max(seg.no_speech_probability());
+        for t in 0..seg.n_tokens() {
+            let Some(token) = seg.get_token(t) else { continue };
+            if let Ok(piece) = token.to_str_lossy() {
+                if piece.starts_with("[_") || piece.starts_with("<|") {
+                    continue;
+                }
+            }
+            let data = token.token_data();
+            sum_p += data.p;
+            sum_plog += data.plog;
+            n += 1;
+        }
+    }
+    let n = n.max(1) as f32;
+    DecodeStats { mean_p: sum_p / n, avg_logprob: sum_plog / n, no_speech_prob: no_speech }
+}
+
+/// The gates every serious chunked-whisper deployment ships (OpenAI defaults +
+/// LocalVocal's mean-probability threshold). See docs/dev research notes.
+fn is_low_confidence(stats: &DecodeStats) -> bool {
+    (stats.no_speech_prob > 0.6 && stats.avg_logprob < -1.0) || stats.mean_p < 0.4
 }
 
 pub fn spawn_worker(
@@ -105,7 +143,11 @@ pub fn spawn_worker(
                 match job {
                     Job::Partial { pcm, t_start_ms } => {
                         if let Some(text) = decode(&mut state, &pcm, utt_lang.as_deref(), threads) {
-                            if !text.is_empty() && !is_known_hallucination(&text) {
+                            let stats = collect_stats(&state);
+                            if !text.is_empty()
+                                && !is_known_hallucination(&text)
+                                && stats.mean_p >= 0.4
+                            {
                                 let _ = event_tx.send(SttEvent::Partial { text, t_start_ms });
                             }
                         }
@@ -117,8 +159,19 @@ pub fn spawn_worker(
                             decode_final(&mut state, &pcm, utt_lang.as_deref(), threads, t_start_ms)
                         {
                             // Hallucination guards: empty, exact repeat of the
-                            // previous final, or a known noise hallucination.
-                            if !text.is_empty() && text != last_final && !is_known_hallucination(&text) {
+                            // previous final, a known noise hallucination, or a
+                            // low-confidence decode (probability gates).
+                            let stats = collect_stats(&state);
+                            if is_low_confidence(&stats) {
+                                eprintln!(
+                                    "[stt] gated final (mean_p={:.2} no_speech={:.2} logprob={:.2}): {text:?}",
+                                    stats.mean_p, stats.no_speech_prob, stats.avg_logprob
+                                );
+                            } else if !text.is_empty()
+                                && text != last_final
+                                && !is_known_hallucination(&text)
+                                && !is_noise_final(&text)
+                            {
                                 last_final = text.clone();
                                 let _ = event_tx.send(SttEvent::Final {
                                     text,
@@ -207,7 +260,21 @@ fn collect_text(state: &whisper_rs::WhisperState) -> String {
             }
         }
     }
+    let mut text = text.trim().to_string();
+    // Trailing "..." runs are a whisper noise tic (anarlog strips them too).
+    while text.ends_with("..") {
+        text.pop();
+    }
     text.trim().to_string()
+}
+
+/// Single-word noise outputs whisper emits on breaths/music — never worth a line.
+/// (anarlog ships the same blocklist.)
+fn is_noise_final(text: &str) -> bool {
+    matches!(
+        text.trim().to_lowercase().trim_end_matches(['.', '!']).trim(),
+        "you" | "thank you" | "♪" | "obrigado" | "obrigada" | "gracias"
+    )
 }
 
 /// Group whisper's subword tokens into words with absolute-clock spans.
