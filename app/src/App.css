@@ -201,7 +201,6 @@ html, body { margin: 0; background: transparent; }
   display: inline-block;
   vertical-align: bottom;
 }
-.line.partial { width: 100%; }
 .line.partial span { opacity: 0.75; }
 .line.dim { color: #9ba0ae; font-style: italic; }
 
@@ -213,6 +212,23 @@ html, body { margin: 0; background: transparent; }
   flex: none;
   border: 1.5px solid var(--lc);
   background: #262933;
+}
+
+/* Gray Discord-style dot with the number of simultaneous speakers. */
+.joint-badge {
+  width: 1.35em;
+  height: 1.35em;
+  border-radius: 50%;
+  align-self: center;
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: #4a4f5c;
+  border: 1.5px solid #9ba0ae;
+  color: #e2e5ec;
+  font-size: 0.72em;
+  font-weight: 750;
 }
 
 /* Roster layout: vertical member list (Discord-overlay style), caption

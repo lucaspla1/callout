@@ -38,7 +38,7 @@ fn default_font_px() -> f64 {
 }
 
 fn default_identity() -> String {
-    "name".to_string()
+    "both".to_string() // avatar + "Name:" — the chosen principal style
 }
 
 fn default_layout() -> String {
