@@ -215,6 +215,52 @@ html, body { margin: 0; background: transparent; }
   background: #262933;
 }
 
+/* Roster layout: vertical member list (Discord-overlay style), caption
+   bubbles under whoever is talking. */
+.overlay-root.roster-mode {
+  justify-content: flex-start;
+  align-items: flex-start;
+  padding: 10px;
+}
+.roster {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
+  width: min(340px, 94vw);
+}
+.roster-row {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+  width: 100%;
+}
+.roster-id {
+  --c: #9ba0ae;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: rgba(30, 33, 42, var(--cap-a, 0.92));
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 999px;
+  padding: 3px 12px 3px 4px;
+  color: #f7f8fb;
+  font-weight: 650;
+  font-size: 0.9em;
+  transition: background 120ms ease, color 120ms ease;
+}
+.roster-id .cap-avatar { border-color: var(--c); width: 1.6em; height: 1.6em; }
+.roster-id.on {
+  background: var(--c);
+  border-color: var(--c);
+  color: #17181d;
+}
+.roster-id.muted { opacity: 0.5; }
+.roster-line {
+  margin-left: 14px;
+}
+
 .caret {
   display: inline-block;
   width: 9px;

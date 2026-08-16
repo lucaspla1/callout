@@ -96,6 +96,31 @@ fn get_caption_identity(state: tauri::State<settings::SettingsHandle>) -> String
 }
 
 #[tauri::command]
+fn get_overlay_layout(state: tauri::State<settings::SettingsHandle>) -> String {
+    state.overlay_layout()
+}
+
+#[tauri::command]
+fn set_overlay_layout(
+    app: AppHandle,
+    state: tauri::State<settings::SettingsHandle>,
+    layout: String,
+) {
+    state.set_overlay_layout(layout);
+    let layout = state.overlay_layout();
+    apply_overlay_size(&app, &layout);
+    let _ = app.emit("overlay_layout", layout);
+}
+
+/// Roster mode is a tall column; captions mode is a wide bottom band.
+fn apply_overlay_size(app: &AppHandle, layout: &str) {
+    if let Some(overlay) = app.get_webview_window("overlay") {
+        let (w, h) = if layout == "roster" { (380.0, 620.0) } else { (760.0, 240.0) };
+        let _ = overlay.set_size(tauri::LogicalSize::new(w, h));
+    }
+}
+
+#[tauri::command]
 fn set_caption_identity(
     app: AppHandle,
     state: tauri::State<settings::SettingsHandle>,
@@ -195,6 +220,8 @@ pub fn run() {
             set_caption_font,
             get_caption_identity,
             set_caption_identity,
+            get_overlay_layout,
+            set_overlay_layout,
             toggle_move_overlay
         ])
         .setup(|app| {
@@ -205,8 +232,20 @@ pub fn run() {
             spawn_pipeline(app.handle().clone(), settings);
             Ok(())
         })
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .build(tauri::generate_context!())
+        .expect("error while running tauri application")
+        .run(|_app, event| {
+            if let tauri::RunEvent::Exit = event {
+                // whisper.cpp's Metal device has a static destructor that
+                // ggml_aborts during normal exit ("Callout quit unexpectedly"
+                // on every close). Skip atexit destructors — the OS reclaims
+                // everything, and all our state is already persisted.
+                #[cfg(unix)]
+                unsafe {
+                    libc::_exit(0)
+                };
+            }
+        });
 }
 
 /// Voiceprint pass over a final's attributed lines:
@@ -275,6 +314,7 @@ fn refine_with_voice(
 fn setup_overlay_window(app: &AppHandle, settings: &settings::SettingsHandle) {
     let Some(overlay) = app.get_webview_window("overlay") else { return };
     let _ = overlay.set_ignore_cursor_events(true);
+    apply_overlay_size(app, &settings.overlay_layout());
     if let Some((x, y)) = settings.overlay_pos() {
         let _ = overlay.set_position(tauri::LogicalPosition::new(x, y));
         return;

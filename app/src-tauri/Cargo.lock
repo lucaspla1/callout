@@ -434,6 +434,7 @@ dependencies = [
  "cidre",
  "crossbeam-channel",
  "keyring",
+ "libc",
  "ndarray",
  "ort",
  "rand 0.9.5",

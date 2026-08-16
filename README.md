@@ -1,4 +1,4 @@
-# Callout <sub>(working title)</sub>
+# Unmute
 
 **Live captions for Discord voice chat, rendered as an in-game overlay — with each line labeled by who said it.**
 

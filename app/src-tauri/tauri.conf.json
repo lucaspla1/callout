@@ -1,6 +1,6 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "Callout",
+  "productName": "Unmute",
   "version": "0.1.0",
   "identifier": "app.callout.desktop",
   "build": {
@@ -13,13 +13,13 @@
     "macOSPrivateApi": true,
     "windows": [
       {
-        "title": "Callout — dev preview",
+        "title": "Unmute — dev preview",
         "width": 900,
         "height": 640
       },
       {
         "label": "overlay",
-        "title": "Callout Overlay",
+        "title": "Unmute Overlay",
         "width": 760,
         "height": 240,
         "transparent": true,

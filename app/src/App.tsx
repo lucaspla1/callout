@@ -41,6 +41,7 @@ function App() {
   const [dl, setDl] = useState<{ id: string; pct: number } | null>(null);
   const [fontPx, setFontPx] = useState(16);
   const [identity, setIdentity] = useState<IdentityMode>("name");
+  const [layout, setLayout] = useState<"captions" | "roster">("captions");
 
   const cycleIdentity = () => {
     const next = IDENTITY_CYCLE[(IDENTITY_CYCLE.indexOf(identity) + 1) % IDENTITY_CYCLE.length];
@@ -48,11 +49,18 @@ function App() {
     invoke("set_caption_identity", { mode: next }).catch(() => {});
   };
 
+  const toggleLayout = () => {
+    const next = layout === "roster" ? "captions" : "roster";
+    setLayout(next);
+    invoke("set_overlay_layout", { layout: next }).catch(() => {});
+  };
+
   useEffect(() => {
     invoke<string[]>("get_languages").then(setLanguages).catch(() => {});
     invoke<number>("get_overlay_opacity").then(setOpacity).catch(() => {});
     invoke<number>("get_caption_font").then(setFontPx).catch(() => {});
     invoke<IdentityMode>("get_caption_identity").then(setIdentity).catch(() => {});
+    invoke<"captions" | "roster">("get_overlay_layout").then(setLayout).catch(() => {});
     const unDl = listen<ModelDl>("model_dl", (e) => {
       const ev = e.payload;
       if (ev.state === "progress") {
@@ -95,7 +103,7 @@ function App() {
   return (
     <main className="shell">
       <header className="bar">
-        <span className="brand">Callout</span>
+        <span className="brand">Unmute</span>
         <span className={"stage" + (status?.state === "ready" ? " ok" : "")}>{statusText}</span>
         {captions && (
           <span
@@ -120,6 +128,13 @@ function App() {
           onClick={cycleIdentity}
         >
           {IDENTITY_LABEL[identity]}
+        </button>
+        <button
+          className="lang"
+          title="Overlay layout: bottom captions feed, or vertical roster with bubbles under whoever talks"
+          onClick={toggleLayout}
+        >
+          {layout === "roster" ? "▤ roster" : "▬ feed"}
         </button>
         <span className="opacity-slider" title="Overlay background opacity">
           <input

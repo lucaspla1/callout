@@ -14,24 +14,89 @@ function Overlay() {
   const [opacity, setOpacity] = useState(0.92);
   const [fontPx, setFontPx] = useState(16);
   const [identity, setIdentity] = useState<IdentityMode>("name");
+  const [layout, setLayout] = useState<"captions" | "roster">("captions");
 
   useEffect(() => {
     invoke<number>("get_overlay_opacity").then(setOpacity).catch(() => {});
     invoke<number>("get_caption_font").then(setFontPx).catch(() => {});
     invoke<IdentityMode>("get_caption_identity").then(setIdentity).catch(() => {});
+    invoke<"captions" | "roster">("get_overlay_layout").then(setLayout).catch(() => {});
     const unMove = listen<boolean>("overlay_move_mode", (e) => setMoveMode(e.payload));
     const unOpacity = listen<number>("overlay_opacity", (e) => setOpacity(e.payload));
     const unFont = listen<number>("caption_font", (e) => setFontPx(e.payload));
     const unIdentity = listen<IdentityMode>("caption_identity", (e) => setIdentity(e.payload));
+    const unLayout = listen<"captions" | "roster">("overlay_layout", (e) => setLayout(e.payload));
     return () => {
       unMove.then((f) => f());
       unOpacity.then((f) => f());
       unFont.then((f) => f());
       unIdentity.then((f) => f());
+      unLayout.then((f) => f());
     };
   }, []);
 
   const empty = finals.length === 0 && !partial;
+  const allLines = [...finals, ...(partial ? [partial] : [])];
+  const linesOf = (id: string) =>
+    allLines.filter((l) => l.speaker_ids.length === 1 && l.speaker_ids[0] === id);
+  const groupLines = allLines.filter((l) => l.speaker_ids.length !== 1);
+
+  if (layout === "roster") {
+    return (
+      <div
+        className={"overlay-root roster-mode" + (moveMode ? " moving" : "")}
+        style={{ ["--cap-a" as string]: opacity, ["--cap-font" as string]: `${fontPx}px` }}
+      >
+        {moveMode && (
+          <div className="drag-handle" data-tauri-drag-region>
+            drag to move · ⌘⇧O or the move button to lock
+          </div>
+        )}
+        {channel && (
+          <div className="roster">
+            {[...members]
+              .sort((a, b) => a.display_name.localeCompare(b.display_name))
+              .map((m) => (
+                <div key={m.id} className="roster-row">
+                  <div
+                    className={"roster-id" + (speaking.includes(m.id) ? " on" : "") + (m.muted ? " muted" : "")}
+                    style={{ ["--c" as string]: m.color }}
+                  >
+                    {m.avatar_url && <img className="cap-avatar" src={m.avatar_url} alt="" />}
+                    <span>{m.display_name}</span>
+                  </div>
+                  {linesOf(m.id).map((l) => (
+                    <p
+                      key={l.t_start_ms + l.text}
+                      className={"line roster-line" + (l.is_final ? "" : " partial")}
+                      style={{ ["--lc" as string]: l.color }}
+                    >
+                      <span>
+                        {l.text}
+                        {!l.is_final && <i className="caret" />}
+                      </span>
+                    </p>
+                  ))}
+                </div>
+              ))}
+            {groupLines.map((l) => (
+              <p
+                key={l.t_start_ms + l.text}
+                className={"line roster-line" + (l.is_final ? "" : " partial")}
+                style={{ ["--lc" as string]: l.color }}
+              >
+                <b style={{ color: l.color }}>{l.speaker_label}</b>
+                <span>
+                  {l.text}
+                  {!l.is_final && <i className="caret" />}
+                </span>
+              </p>
+            ))}
+          </div>
+        )}
+      </div>
+    );
+  }
 
   return (
     <div

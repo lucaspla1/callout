@@ -20,6 +20,10 @@ pub struct Settings {
     /// How speaker identity renders on caption lines: "name" | "avatar" | "both".
     #[serde(default = "default_identity")]
     pub caption_identity: String,
+    /// Overlay layout: "captions" (bottom feed) | "roster" (vertical member
+    /// list, Discord-overlay style, bubbles under whoever is talking).
+    #[serde(default = "default_layout")]
+    pub overlay_layout: String,
     /// Saved overlay position (logical px); None = bottom-center default.
     #[serde(default)]
     pub overlay_pos: Option<(f64, f64)>,
@@ -37,6 +41,10 @@ fn default_identity() -> String {
     "name".to_string()
 }
 
+fn default_layout() -> String {
+    "captions".to_string()
+}
+
 impl Default for Settings {
     fn default() -> Self {
         Self {
@@ -44,6 +52,7 @@ impl Default for Settings {
             overlay_opacity: default_opacity(),
             caption_font_px: default_font_px(),
             caption_identity: default_identity(),
+            overlay_layout: default_layout(),
             overlay_pos: None,
         }
     }
@@ -99,6 +108,15 @@ impl SettingsHandle {
             _ => "name".to_string(),
         };
         self.mutate(|s| s.caption_identity = mode);
+    }
+
+    pub fn overlay_layout(&self) -> String {
+        self.inner.read().map(|s| s.overlay_layout.clone()).unwrap_or_else(|_| "captions".into())
+    }
+
+    pub fn set_overlay_layout(&self, layout: String) {
+        let layout = if layout == "roster" { layout } else { "captions".to_string() };
+        self.mutate(|s| s.overlay_layout = layout);
     }
 
     pub fn overlay_pos(&self) -> Option<(f64, f64)> {

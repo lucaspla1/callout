@@ -159,17 +159,24 @@ fn now_epoch() -> u64 {
     SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0)
 }
 
-// Keychain access is best-effort: a failure just means re-authorizing next launch.
-//
-// Dev builds cache to a plain file instead: every recompile produces a new
-// binary identity, so the keychain would prompt "allow access?" on each launch
-// — the exact papercut this avoids. Release builds use the real keychain.
+// Token cache is a plain file for ALL builds until the app ships with a real
+// signing identity: ad-hoc-signed builds change identity on every rebuild, so
+// the keychain silently denies access to items the previous build created —
+// which forced a fresh Discord authorization on every launch. Restore the
+// keychain store (below, cfg'd off) once Developer ID signing lands.
 
-#[cfg(debug_assertions)]
 mod store {
     use super::CachedTokens;
 
     fn path() -> Option<std::path::PathBuf> {
+        let home = std::env::var("HOME").ok()?;
+        Some(
+            std::path::PathBuf::from(home)
+                .join("Library/Application Support/app.callout.desktop/tokens.json"),
+        )
+    }
+
+    fn legacy_path() -> Option<std::path::PathBuf> {
         let home = std::env::var("HOME").ok()?;
         Some(
             std::path::PathBuf::from(home)
@@ -178,7 +185,10 @@ mod store {
     }
 
     pub fn load() -> Option<CachedTokens> {
-        std::fs::read_to_string(path()?).ok().and_then(|s| serde_json::from_str(&s).ok())
+        let read = |p: std::path::PathBuf| {
+            std::fs::read_to_string(p).ok().and_then(|s| serde_json::from_str(&s).ok())
+        };
+        path().and_then(read).or_else(|| legacy_path().and_then(read))
     }
 
     pub fn save(tokens: &CachedTokens) {
@@ -196,8 +206,9 @@ mod store {
     }
 }
 
-#[cfg(not(debug_assertions))]
-mod store {
+// Disabled until the app has a stable signing identity (see note above).
+#[cfg(any())]
+mod keychain_store {
     use super::{CachedTokens, KEYRING_ACCOUNT, KEYRING_SERVICE};
 
     pub fn load() -> Option<CachedTokens> {
