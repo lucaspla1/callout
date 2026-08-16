@@ -30,6 +30,9 @@ rubato = "5.0.0"
 crossbeam-channel = "0.5.16"
 voice_activity_detector = "0.2.1"
 tauri-plugin-global-shortcut = "2.3.2"
+ort = "=2.0.0-rc.10"
+ndarray = "0.16"
+rustfft = "6"
 
 [target.'cfg(target_os = "macos")'.dependencies]
 cidre = "0.20.0"

@@ -23,6 +23,7 @@ use crate::stt::{MockStt, SttEvent};
 const DEFAULT_DISCORD_CLIENT_ID: &str = "1538241556560085065";
 
 const MODEL_FILE: &str = "models/whisper/ggml-small-q5_1.bin";
+const SPEAKER_MODEL_FILE: &str = "models/speaker/wespeaker_en_voxceleb_resnet34_LM.onnx";
 
 /// Ten distinct speaker colors, assigned in arrival order; the 11th person
 /// starts reusing them. Readable on the dark caption pills.
@@ -176,6 +177,66 @@ pub fn run() {
         .expect("error while running tauri application");
 }
 
+/// Voiceprint pass over a final's attributed lines:
+///  - a line owned by exactly one (indicator-clean) speaker teaches that
+///    person's voiceprint (auto-enrollment — solo speech is labeled data);
+///  - an ambiguous "N speaking" line is re-embedded and reassigned to the
+///    candidate whose voiceprint clearly matches (threshold + margin), which
+///    is what separates a talking voice from an open-mic hammering noise.
+fn refine_with_voice(
+    lines: &mut [align::CaptionLine],
+    pcm: &[f32],
+    utt_start: u64,
+    utt_end: u64,
+    voice: &mut Option<stt::voiceid::VoiceId>,
+    store: &mut stt::voiceid::VoiceStore,
+    roster: &HashMap<String, presence::Member>,
+) {
+    use stt::voiceid::{self, MIN_ENROLL_MS, MIN_MATCH_MS};
+    let Some(vid) = voice.as_mut() else { return };
+    if pcm.is_empty() {
+        return;
+    }
+    let ends: Vec<u64> = (0..lines.len())
+        .map(|i| lines.get(i + 1).map(|n| n.t_start_ms).unwrap_or(utt_end))
+        .collect();
+    for (i, line) in lines.iter_mut().enumerate() {
+        let t0 = line.t_start_ms.max(utt_start);
+        let t1 = ends[i].max(t0);
+        let dur = t1 - t0;
+        let s0 = (((t0 - utt_start) as usize) * 16).min(pcm.len());
+        let s1 = (((t1 - utt_start) as usize) * 16).min(pcm.len());
+        let seg = &pcm[s0..s1];
+        match line.speaker_ids.clone().as_slice() {
+            [one] if dur >= MIN_ENROLL_MS => {
+                if let Some(emb) = vid.embed(seg) {
+                    store.enroll(one, &emb);
+                }
+            }
+            many if many.len() > 1 && dur >= MIN_MATCH_MS => {
+                let Some(emb) = vid.embed(seg) else { continue };
+                let scored: Vec<(String, f32)> = many
+                    .iter()
+                    .filter_map(|id| store.similarity(id, &emb).map(|s| (id.clone(), s)))
+                    .collect();
+                let dump: Vec<String> =
+                    scored.iter().map(|(id, s)| format!("{id}:{s:.2}")).collect();
+                if let Some(winner) = voiceid::pick_by_similarity(scored) {
+                    if let Some(m) = roster.get(&winner) {
+                        eprintln!("[voice] '{}' resolved → {} ({})", line.speaker_label, m.display_name, dump.join(" "));
+                        line.speaker_ids = vec![winner];
+                        line.speaker_label = m.display_name.clone();
+                        line.color = m.color.clone();
+                    }
+                } else if !dump.is_empty() {
+                    eprintln!("[voice] kept '{}' ({})", line.speaker_label, dump.join(" "));
+                }
+            }
+            _ => {}
+        }
+    }
+}
+
 /// Overlay: click-through, at the saved position or parked bottom-center.
 fn setup_overlay_window(app: &AppHandle, settings: &settings::SettingsHandle) {
     let Some(overlay) = app.get_webview_window("overlay") else { return };
@@ -255,6 +316,29 @@ fn spawn_pipeline(app: AppHandle, settings: settings::SettingsHandle) {
     };
 
     // ── Join + fan out to the UI ───────────────────────────────────────────
+    // Voiceprint layer (attribution 2.0): optional — disabled if the speaker
+    // model isn't on disk.
+    let data_dir = app.path().app_data_dir().unwrap_or_default();
+    let mut voice = {
+        let p = data_dir.join(SPEAKER_MODEL_FILE);
+        if p.is_file() {
+            match stt::voiceid::VoiceId::load(&p) {
+                Ok(v) => {
+                    eprintln!("[voice] speaker model loaded");
+                    Some(v)
+                }
+                Err(e) => {
+                    eprintln!("[voice] {e}");
+                    None
+                }
+            }
+        } else {
+            eprintln!("[voice] no speaker model at {p:?} — voiceprints disabled");
+            None
+        }
+    };
+    let mut voice_store = stt::voiceid::VoiceStore::load(data_dir.join("voiceprints.json"));
+
     tauri::async_runtime::spawn(async move {
         let mut roster: HashMap<String, presence::Member> = HashMap::new();
         let mut log = SpeakingLog::new();
@@ -311,18 +395,18 @@ fn spawn_pipeline(app: AppHandle, settings: settings::SettingsHandle) {
                             let line = align::attribute(&log, &roster, &text, false, t_start_ms, now_ms());
                             let _ = app.emit("caption", &line);
                         }
-                        SttEvent::Final { text, words, t_start_ms, t_end_ms } => {
+                        SttEvent::Final { text, words, pcm, t_start_ms, t_end_ms } => {
                             eprintln!("[callout] final: {text:?}");
-                            let lines = align::attribute_final(&log, &roster, &text, &words, t_start_ms, t_end_ms);
-                            // Diagnostic while attribution 2.0 settles: when a joint
-                            // line survives, dump word timings to judge whisper's spans.
-                            if lines.iter().any(|l| l.speaker_ids.len() > 1) {
-                                let spans: Vec<String> = words
-                                    .iter()
-                                    .map(|w| format!("{}@{}-{}", w.text, w.t0_ms, w.t1_ms))
-                                    .collect();
-                                eprintln!("[align] joint survived; words: {}", spans.join(" "));
-                            }
+                            let mut lines = align::attribute_final(&log, &roster, &text, &words, t_start_ms, t_end_ms);
+                            refine_with_voice(
+                                &mut lines,
+                                &pcm,
+                                t_start_ms,
+                                t_end_ms,
+                                &mut voice,
+                                &mut voice_store,
+                                &roster,
+                            );
                             for line in lines {
                                 let _ = app.emit("caption", &line);
                             }

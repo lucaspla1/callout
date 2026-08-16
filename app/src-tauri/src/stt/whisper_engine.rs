@@ -120,7 +120,13 @@ pub fn spawn_worker(
                             // previous final, or a known noise hallucination.
                             if !text.is_empty() && text != last_final && !is_known_hallucination(&text) {
                                 last_final = text.clone();
-                                let _ = event_tx.send(SttEvent::Final { text, words, t_start_ms, t_end_ms });
+                                let _ = event_tx.send(SttEvent::Final {
+                                    text,
+                                    words,
+                                    pcm,
+                                    t_start_ms,
+                                    t_end_ms,
+                                });
                             }
                         }
                     }

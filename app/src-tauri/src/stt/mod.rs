@@ -4,7 +4,9 @@
 //! v0.1 engine: VAD-gated chunked whisper.cpp (multilingual small-q5_1).
 //! MockStt fakes the same event stream for CALLOUT_MOCK=1 demos.
 
+pub mod fbank;
 mod gate;
+pub mod voiceid;
 #[cfg(target_os = "macos")]
 mod whisper_engine;
 
@@ -29,8 +31,16 @@ pub struct Word {
 pub enum SttEvent {
     /// Provisional text for the utterance in progress; replaces the previous Partial.
     Partial { text: String, t_start_ms: u64 },
-    /// Utterance finalized; immutable afterwards.
-    Final { text: String, words: Vec<Word>, t_start_ms: u64, t_end_ms: u64 },
+    /// Utterance finalized; immutable afterwards. Carries the utterance audio
+    /// for voiceprint enrollment/matching (internal only — never serialized).
+    Final {
+        text: String,
+        words: Vec<Word>,
+        #[serde(skip)]
+        pcm: Vec<f32>,
+        t_start_ms: u64,
+        t_end_ms: u64,
+    },
 }
 
 /// A decode job produced by the VAD gate for the engine worker.
@@ -114,6 +124,7 @@ impl MockStt {
                 let _ = tx.send(SttEvent::Final {
                     text: phrase.to_string(),
                     words: Vec::new(),
+                    pcm: Vec::new(),
                     t_start_ms: t_start,
                     t_end_ms: now_ms(),
                 });
