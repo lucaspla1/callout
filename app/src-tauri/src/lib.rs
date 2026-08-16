@@ -211,6 +211,8 @@ fn refine_with_voice(
             [one] if dur >= MIN_ENROLL_MS => {
                 if let Some(emb) = vid.embed(seg) {
                     store.enroll(one, &emb);
+                    let name = roster.get(one).map(|m| m.display_name.as_str()).unwrap_or(one);
+                    eprintln!("[voice] learned {} (sample #{}, {}ms)", name, store.samples(one), dur);
                 }
             }
             many if many.len() > 1 && dur >= MIN_MATCH_MS => {
