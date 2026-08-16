@@ -20,24 +20,6 @@ html, body { margin: 0; background: transparent; }
   background: transparent;
   overflow: hidden;
 }
-.overlay-chips {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-  /* Same fixed column as the captions, so the two blocks line up.
-     No strip background — each name pill carries its own. */
-  width: min(560px, 92vw);
-  background: transparent;
-  padding: 0;
-}
-.overlay-chips .chip {
-  background: rgba(30, 33, 42, 0.88);
-  border: 1px solid rgba(255, 255, 255, 0.1);
-}
-.overlay-chips .chip.on {
-  background: var(--c);
-  border-color: var(--c);
-}
 .overlay-root.moving {
   outline: 2px dashed #7a87f8;
   outline-offset: -2px;
@@ -252,50 +234,79 @@ html, body { margin: 0; background: transparent; }
   text-align: center;
 }
 
-/* Roster layout: vertical member list (Discord-overlay style), caption
-   bubbles under whoever is talking. */
-.overlay-root.roster-mode {
+/* Feed layout: chat-style column (avatar left, name above text). Partials
+   slide in from the left; finals fade out over the caption TTL so boxes
+   expire visibly instead of vanishing. */
+.overlay-root.feed-mode {
   justify-content: flex-start;
   align-items: flex-start;
   padding: 10px;
 }
-.roster {
+.feed {
   display: flex;
   flex-direction: column;
   align-items: flex-start;
-  gap: 8px;
-  width: min(340px, 94vw);
+  gap: 7px;
+  width: min(480px, 94vw);
+  font-size: var(--cap-font, 16px);
+  line-height: 1.4;
 }
-.roster-row {
+.feed-line {
+  --lc: #9ba0ae;
   display: flex;
-  flex-direction: column;
+  gap: 9px;
   align-items: flex-start;
-  gap: 4px;
-  width: 100%;
+  width: fit-content;
+  max-width: 100%;
+  background: rgba(23, 24, 29, var(--cap-a, 0.92));
+  border: 1px solid rgba(255, 255, 255, 0.07);
+  border-radius: 12px;
+  padding: 7px 13px 7px 9px;
+  color: #f0f2f7;
+  box-shadow: 0 3px 12px rgba(0, 0, 0, 0.4);
+  /* Finals live LINE_TTL_MS (7s, useCallout.ts): hold, then fade the last stretch. */
+  animation: feed-fade 7s linear forwards;
 }
-.roster-id {
-  --c: #9ba0ae;
+.feed-line.partial {
+  animation: feed-in 180ms ease;
+}
+.feed-line.partial > .feed-meta > span { opacity: 0.8; }
+.feed-avatar {
+  width: 1.8em;
+  height: 1.8em;
+  border-radius: 50%;
+  flex: none;
+  margin-top: 0.1em;
+  border: 1.5px solid var(--lc);
+  background: #262933;
+}
+.feed-avatar.fallback {
   display: flex;
   align-items: center;
-  gap: 8px;
-  background: rgba(30, 33, 42, var(--cap-a, 0.92));
-  border: 1px solid rgba(255, 255, 255, 0.1);
-  border-radius: 999px;
-  padding: 3px 12px 3px 4px;
-  color: #f7f8fb;
-  font-weight: 650;
-  font-size: 0.9em;
-  transition: background 120ms ease, color 120ms ease;
-}
-.roster-id .cap-avatar { border-color: var(--c); width: 1.6em; height: 1.6em; }
-.roster-id.on {
-  background: var(--c);
-  border-color: var(--c);
+  justify-content: center;
+  background: var(--lc);
   color: #17181d;
+  font-weight: 800;
+  font-size: 0.8em;
+  font-style: normal;
 }
-.roster-id.muted { opacity: 0.5; }
-.roster-line {
-  margin-left: 14px;
+.feed-meta {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+.feed-meta b {
+  font-size: 0.8em;
+  font-weight: 750;
+  line-height: 1.2;
+}
+.feed-meta > span { overflow-wrap: anywhere; }
+@keyframes feed-in {
+  from { opacity: 0; transform: translateX(-14px); }
+}
+@keyframes feed-fade {
+  0%, 82% { opacity: 1; }
+  100% { opacity: 0; }
 }
 
 .caret {
@@ -309,4 +320,5 @@ html, body { margin: 0; background: transparent; }
 @media (prefers-reduced-motion: reduce) {
   .caret { animation: none; }
   .chip { transition: none; }
+  .feed-line, .feed-line.partial { animation: none; }
 }

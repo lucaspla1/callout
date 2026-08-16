@@ -20,8 +20,8 @@ pub struct Settings {
     /// How speaker identity renders on caption lines: "name" | "avatar" | "both".
     #[serde(default = "default_identity")]
     pub caption_identity: String,
-    /// Overlay layout: "captions" (bottom feed) | "roster" (vertical member
-    /// list, Discord-overlay style, bubbles under whoever is talking).
+    /// Overlay layout: "captions" (stacked pills) | "feed" (chat-style column,
+    /// avatar left + name above text).
     #[serde(default = "default_layout")]
     pub overlay_layout: String,
     /// Saved overlay position (logical px); None = bottom-center default.
@@ -111,11 +111,14 @@ impl SettingsHandle {
     }
 
     pub fn overlay_layout(&self) -> String {
-        self.inner.read().map(|s| s.overlay_layout.clone()).unwrap_or_else(|_| "captions".into())
+        // Normalize on read so stale values (e.g. the retired "roster") fall
+        // back to the default instead of leaking to the frontend.
+        let stored = self.inner.read().map(|s| s.overlay_layout.clone()).unwrap_or_default();
+        if stored == "feed" { stored } else { "captions".into() }
     }
 
     pub fn set_overlay_layout(&self, layout: String) {
-        let layout = if layout == "roster" { layout } else { "captions".to_string() };
+        let layout = if layout == "feed" { layout } else { "captions".to_string() };
         self.mutate(|s| s.overlay_layout = layout);
     }
 

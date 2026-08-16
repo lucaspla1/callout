@@ -41,7 +41,7 @@ function App() {
   const [dl, setDl] = useState<{ id: string; pct: number } | null>(null);
   const [fontPx, setFontPx] = useState(16);
   const [identity, setIdentity] = useState<IdentityMode>("name");
-  const [layout, setLayout] = useState<"captions" | "roster">("captions");
+  const [layout, setLayout] = useState<"captions" | "feed">("captions");
 
   const cycleIdentity = () => {
     const next = IDENTITY_CYCLE[(IDENTITY_CYCLE.indexOf(identity) + 1) % IDENTITY_CYCLE.length];
@@ -50,7 +50,7 @@ function App() {
   };
 
   const toggleLayout = () => {
-    const next = layout === "roster" ? "captions" : "roster";
+    const next = layout === "feed" ? "captions" : "feed";
     setLayout(next);
     invoke("set_overlay_layout", { layout: next }).catch(() => {});
   };
@@ -60,7 +60,7 @@ function App() {
     invoke<number>("get_overlay_opacity").then(setOpacity).catch(() => {});
     invoke<number>("get_caption_font").then(setFontPx).catch(() => {});
     invoke<IdentityMode>("get_caption_identity").then(setIdentity).catch(() => {});
-    invoke<"captions" | "roster">("get_overlay_layout").then(setLayout).catch(() => {});
+    invoke<"captions" | "feed">("get_overlay_layout").then(setLayout).catch(() => {});
     const unDl = listen<ModelDl>("model_dl", (e) => {
       const ev = e.payload;
       if (ev.state === "progress") {
@@ -131,10 +131,10 @@ function App() {
         </button>
         <button
           className="lang"
-          title="Overlay layout: bottom captions feed, or vertical roster with bubbles under whoever talks"
+          title="Overlay layout: stacked caption pills, or chat-style feed with avatar + name above the text"
           onClick={toggleLayout}
         >
-          {layout === "roster" ? "▤ roster" : "▬ feed"}
+          {layout === "feed" ? "☰ feed" : "▬ pills"}
         </button>
         <span className="opacity-slider" title="Overlay background opacity">
           <input

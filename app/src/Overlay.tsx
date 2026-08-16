@@ -1,5 +1,5 @@
-// The in-game overlay: transparent, click-through window rendering only the
-// caption box and a compact who's-speaking strip.
+// The in-game overlay: transparent, click-through window rendering captions in
+// one of two layouts — "captions" (stacked pills) or "feed" (chat-style column).
 // ⌘⇧C toggles visibility · ⌘⇧M unlocks move mode (drag, then ⌘⇧M again to lock).
 import { useEffect, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
@@ -9,23 +9,23 @@ import { SpeakerIdentity, type IdentityMode } from "./SpeakerIdentity";
 import "./App.css";
 
 function Overlay() {
-  const { channel, members, speaking, finals, partial } = useCallout();
+  const { members, finals, partial } = useCallout();
   const [moveMode, setMoveMode] = useState(false);
   const [opacity, setOpacity] = useState(0.92);
   const [fontPx, setFontPx] = useState(16);
   const [identity, setIdentity] = useState<IdentityMode>("name");
-  const [layout, setLayout] = useState<"captions" | "roster">("captions");
+  const [layout, setLayout] = useState<"captions" | "feed">("captions");
 
   useEffect(() => {
     invoke<number>("get_overlay_opacity").then(setOpacity).catch(() => {});
     invoke<number>("get_caption_font").then(setFontPx).catch(() => {});
     invoke<IdentityMode>("get_caption_identity").then(setIdentity).catch(() => {});
-    invoke<"captions" | "roster">("get_overlay_layout").then(setLayout).catch(() => {});
+    invoke<"captions" | "feed">("get_overlay_layout").then(setLayout).catch(() => {});
     const unMove = listen<boolean>("overlay_move_mode", (e) => setMoveMode(e.payload));
     const unOpacity = listen<number>("overlay_opacity", (e) => setOpacity(e.payload));
     const unFont = listen<number>("caption_font", (e) => setFontPx(e.payload));
     const unIdentity = listen<IdentityMode>("caption_identity", (e) => setIdentity(e.payload));
-    const unLayout = listen<"captions" | "roster">("overlay_layout", (e) => setLayout(e.payload));
+    const unLayout = listen<"captions" | "feed">("overlay_layout", (e) => setLayout(e.payload));
     return () => {
       unMove.then((f) => f());
       unOpacity.then((f) => f());
@@ -37,14 +37,37 @@ function Overlay() {
 
   const empty = finals.length === 0 && !partial;
   const allLines = [...finals, ...(partial ? [partial] : [])];
-  const linesOf = (id: string) =>
-    allLines.filter((l) => l.speaker_ids.length === 1 && l.speaker_ids[0] === id);
-  const groupLines = allLines.filter((l) => l.speaker_ids.length !== 1);
 
-  if (layout === "roster") {
+  if (layout === "feed") {
+    // Chat-style feed: avatar on the left, name above the text. New partials
+    // slide in; finals fade out over their TTL (see .feed-line CSS).
+    const feedLine = (l: (typeof allLines)[number], partialLine: boolean) => {
+      const member =
+        l.speaker_ids.length === 1 ? members.find((m) => m.id === l.speaker_ids[0]) : undefined;
+      return (
+        <div
+          key={partialLine ? "partial" : l.t_start_ms + l.text}
+          className={"feed-line" + (partialLine ? " partial" : "")}
+          style={{ ["--lc" as string]: l.color }}
+        >
+          {member?.avatar_url ? (
+            <img className="feed-avatar" src={member.avatar_url} alt="" />
+          ) : (
+            <span className="feed-avatar fallback">{l.speaker_label.charAt(0).toUpperCase()}</span>
+          )}
+          <span className="feed-meta">
+            <b style={{ color: l.color }}>{l.speaker_label}</b>
+            <span>
+              {l.text}
+              {partialLine && <i className="caret" />}
+            </span>
+          </span>
+        </div>
+      );
+    };
     return (
       <div
-        className={"overlay-root roster-mode" + (moveMode ? " moving" : "")}
+        className={"overlay-root feed-mode" + (moveMode ? " moving" : "")}
         style={{ ["--cap-a" as string]: opacity, ["--cap-font" as string]: `${fontPx}px` }}
       >
         {moveMode && (
@@ -52,46 +75,11 @@ function Overlay() {
             drag to move · ⌘⇧O or the move button to lock
           </div>
         )}
-        {channel && (
-          <div className="roster">
-            {[...members]
-              .sort((a, b) => a.display_name.localeCompare(b.display_name))
-              .map((m) => (
-                <div key={m.id} className="roster-row">
-                  <div
-                    className={"roster-id" + (speaking.includes(m.id) ? " on" : "") + (m.muted ? " muted" : "")}
-                    style={{ ["--c" as string]: m.color }}
-                  >
-                    {m.avatar_url && <img className="cap-avatar" src={m.avatar_url} alt="" />}
-                    <span>{m.display_name}</span>
-                  </div>
-                  {linesOf(m.id).map((l) => (
-                    <p
-                      key={l.t_start_ms + l.text}
-                      className={"line roster-line" + (l.is_final ? "" : " partial")}
-                      style={{ ["--lc" as string]: l.color }}
-                    >
-                      <span>
-                        {l.text}
-                        {!l.is_final && <i className="caret" />}
-                      </span>
-                    </p>
-                  ))}
-                </div>
-              ))}
-            {groupLines.map((l) => (
-              <p
-                key={l.t_start_ms + l.text}
-                className={"line roster-line" + (l.is_final ? "" : " partial")}
-                style={{ ["--lc" as string]: l.color }}
-              >
-                <b style={{ color: l.color }}>{l.speaker_label}</b>
-                <span>
-                  {l.text}
-                  {!l.is_final && <i className="caret" />}
-                </span>
-              </p>
-            ))}
+        {(!empty || moveMode) && (
+          <div className="feed" role="log" aria-live="polite">
+            {finals.map((l) => feedLine(l, false))}
+            {partial && feedLine(partial, true)}
+            {empty && moveMode && <p className="line dim">caption preview — captions appear here</p>}
           </div>
         )}
       </div>
@@ -106,21 +94,6 @@ function Overlay() {
       {moveMode && (
         <div className="drag-handle" data-tauri-drag-region>
           drag to move · ⌘⇧O or the move button to lock
-        </div>
-      )}
-      {channel && (
-        <div className="overlay-chips">
-          {[...members]
-            .sort((a, b) => a.display_name.localeCompare(b.display_name))
-            .map((m) => (
-              <span
-                key={m.id}
-                className={"chip" + (speaking.includes(m.id) ? " on" : "") + (m.muted ? " muted" : "")}
-                style={{ ["--c" as string]: m.color }}
-              >
-                {m.display_name}
-              </span>
-            ))}
         </div>
       )}
       {(!empty || moveMode) && (

@@ -1,0 +1,386 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8" />
+<title>Overlay — 5 variações</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { height: 100%; background: #0e0f13; color: #e8eaf0; font-family: -apple-system, "SF Pro Text", system-ui, sans-serif; }
+  body { display: flex; flex-direction: column; overflow: hidden; }
+
+  /* ---------- toolbar ---------- */
+  .bar {
+    display: flex; align-items: center; gap: 10px;
+    padding: 10px 16px; background: #16181f; border-bottom: 1px solid #262933;
+    flex: none; z-index: 10;
+  }
+  .bar button {
+    font: inherit; font-size: 13px; font-weight: 700;
+    color: #9ba0ae; background: #22252f; border: 1px solid #343846;
+    border-radius: 8px; padding: 6px 14px; cursor: pointer;
+  }
+  .bar button.on { color: #fff; background: #4753e6; border-color: #4753e6; }
+  .bar .desc { font-size: 13px; color: #9ba0ae; margin-left: 8px; }
+  .bar .hint { margin-left: auto; font-size: 12px; color: #565b68; }
+
+  /* ---------- stage (1920×1080, scaled to fit) ---------- */
+  .viewport { flex: 1; position: relative; overflow: hidden; }
+  .stage {
+    position: absolute; left: 50%; top: 50%;
+    width: 1920px; height: 1080px;
+    transform-origin: center center;
+    background: url("fortnite.png") center / cover no-repeat;
+  }
+  .variant { position: absolute; inset: 0; display: none; }
+  .variant.on { display: block; }
+
+  /* ---------- shared bits ---------- */
+  .avatar {
+    display: flex; align-items: center; justify-content: center;
+    border-radius: 50%; flex: none; font-weight: 800; color: #17181d;
+    background: var(--c, #9ba0ae); border: 2px solid rgba(255,255,255,.35);
+  }
+  .caret {
+    display: inline-block; width: 2px; height: .95em; margin-left: 3px;
+    background: currentColor; vertical-align: text-bottom;
+    animation: blink 1s steps(1) infinite;
+  }
+  @keyframes blink { 50% { opacity: 0; } }
+  @keyframes pulse { 0%,100% { box-shadow: 0 0 0 0 var(--c); } 50% { box-shadow: 0 0 0 5px transparent; } }
+
+  /* =========================================================
+     V1 — Atual: chips de roster + pills empilhadas (base ref.)
+     ========================================================= */
+  .v1 .wrap { position: absolute; left: 72px; top: 60px; width: 620px; }
+  .v1 .chips { display: flex; gap: 8px; margin-bottom: 14px; flex-wrap: wrap; }
+  .v1 .chip {
+    --c: #9ba0ae; color: var(--c); font-size: 17px; font-weight: 700;
+    background: rgba(30,33,42,.92); border: 2px solid rgba(255,255,255,.08);
+    border-radius: 999px; padding: 4px 16px;
+  }
+  .v1 .chip.on { background: var(--c); color: #17181d; border-color: var(--c); }
+  .v1 .chip.muted { opacity: .5; text-decoration: line-through; }
+  .v1 .line {
+    --lc: #9ba0ae; display: flex; gap: 12px; align-items: center;
+    width: fit-content; max-width: 100%;
+    background: rgba(30,33,42,.92); border: 1px solid rgba(255,255,255,.08);
+    border-left: 4px solid var(--lc); border-radius: 10px;
+    padding: 8px 18px 8px 12px; margin-bottom: 8px;
+    font-size: 22px; line-height: 1.45; color: #f7f8fb;
+    box-shadow: 0 4px 16px rgba(0,0,0,.45);
+  }
+  .v1 .line b { color: var(--lc); font-weight: 750; white-space: nowrap; }
+  .v1 .avatar { width: 30px; height: 30px; font-size: 14px; border-color: var(--lc); }
+  .v1 .line.partial > span { opacity: .8; }
+
+  /* =========================================================
+     V2 — Legenda de jogo: inferior central, estilo cinema
+     ========================================================= */
+  .v2 .wrap {
+    position: absolute; left: 50%; bottom: 84px; transform: translateX(-50%);
+    width: 960px; display: flex; flex-direction: column; align-items: center; gap: 8px;
+  }
+  .v2 .line {
+    --lc: #9ba0ae; width: fit-content; max-width: 100%;
+    background: rgba(12,13,17,.72); border-radius: 10px;
+    padding: 8px 22px; text-align: center;
+    font-size: 26px; line-height: 1.5; color: #fff;
+    text-shadow: 0 2px 4px rgba(0,0,0,.9);
+  }
+  .v2 .line b { color: var(--lc); font-weight: 800; }
+  .v2 .line.partial span { opacity: .8; }
+  .v2 .speaking-row { display: flex; gap: 10px; margin-bottom: 2px; }
+  .v2 .dot {
+    width: 14px; height: 14px; border-radius: 50%;
+    background: var(--c); opacity: .35;
+  }
+  .v2 .dot.on { opacity: 1; animation: pulse 1.4s ease infinite; }
+
+  /* =========================================================
+     V3 — Feed esquerda (motion): mensagens chegam em tempo real
+     ========================================================= */
+  .v3 .wrap {
+    position: absolute; left: 72px; top: 96px; width: 500px;
+    display: flex; flex-direction: column; align-items: flex-start;
+  }
+  .v3 .slot { overflow: hidden; }
+  .v3 .line {
+    --lc: #9ba0ae; display: flex; gap: 10px; align-items: flex-start;
+    width: fit-content; max-width: 100%;
+    background: rgba(23,24,29,.9); border: 1px solid rgba(255,255,255,.07);
+    border-radius: 12px; padding: 8px 14px; margin-bottom: 8px;
+    font-size: 19px; line-height: 1.4; color: #f0f2f7;
+    box-shadow: 0 3px 12px rgba(0,0,0,.4);
+    transition: opacity .18s ease, transform .18s ease;
+  }
+  .v3 .line .avatar { width: 34px; height: 34px; font-size: 15px; border-color: var(--lc); margin-top: 1px; }
+  .v3 .meta { min-width: 0; }
+  .v3 .meta b { display: block; color: var(--lc); font-size: 15px; font-weight: 750; margin-bottom: 1px; }
+  .v3 .meta .txt { overflow-wrap: anywhere; }
+  .v3 .line.partial .txt { opacity: .8; }
+  .v3 .slot.bye { transition: height .35s ease, opacity .35s ease; opacity: 0 !important; }
+
+  /* =========================================================
+     V4 — Roster fixo: coluna de falantes + balão de quem fala
+     ========================================================= */
+  .v4 .wrap { position: absolute; left: 64px; top: 300px; display: flex; flex-direction: column; gap: 14px; }
+  .v4 .row { display: flex; align-items: center; gap: 12px; }
+  .v4 .who {
+    display: flex; align-items: center; gap: 10px;
+    background: rgba(23,24,29,.85); border-radius: 999px;
+    padding: 5px 16px 5px 6px; border: 2px solid transparent;
+  }
+  .v4 .who .avatar { width: 36px; height: 36px; font-size: 15px; }
+  .v4 .who b { font-size: 18px; font-weight: 750; color: #cfd3dd; }
+  .v4 .row.speaking .who { border-color: var(--c); }
+  .v4 .row.speaking .who b { color: var(--c); }
+  .v4 .row.speaking .avatar { animation: pulse 1.4s ease infinite; }
+  .v4 .row.idle { opacity: .6; }
+  .v4 .row.muted { opacity: .45; }
+  .v4 .row.muted b { text-decoration: line-through; }
+  .v4 .bubble {
+    --lc: #9ba0ae; max-width: 520px;
+    background: rgba(30,33,42,.94); border: 1px solid rgba(255,255,255,.08);
+    border-radius: 4px 16px 16px 16px;
+    padding: 8px 16px; font-size: 21px; line-height: 1.45; color: #f7f8fb;
+    box-shadow: 0 4px 14px rgba(0,0,0,.45);
+  }
+  .v4 .bubble.partial { opacity: .85; }
+
+  /* =========================================================
+     V5 — Ticker minimal: uma linha, pegada mínima
+     ========================================================= */
+  .v5 .wrap { position: absolute; left: 72px; bottom: 200px; display: flex; flex-direction: column; gap: 10px; }
+  .v5 .presence { display: flex; gap: 8px; align-items: center; padding-left: 4px; }
+  .v5 .pdot { width: 12px; height: 12px; border-radius: 50%; background: var(--c); opacity: .35; }
+  .v5 .pdot.on { opacity: 1; animation: pulse 1.4s ease infinite; }
+  .v5 .ticker {
+    display: flex; align-items: center; gap: 12px;
+    width: fit-content; max-width: 780px;
+    background: rgba(23,24,29,.9); border: 1px solid rgba(255,255,255,.08);
+    border-radius: 999px; padding: 7px 22px 7px 8px;
+    font-size: 22px; line-height: 1.4; color: #f7f8fb;
+    box-shadow: 0 4px 16px rgba(0,0,0,.5);
+  }
+  .v5 .ticker .avatar { width: 34px; height: 34px; font-size: 15px; border-color: var(--lc); }
+  .v5 .ticker b { color: var(--lc); font-weight: 750; white-space: nowrap; }
+  .v5 .ticker .txt { opacity: .95; }
+</style>
+</head>
+<body>
+  <div class="bar">
+    <button data-v="1" class="on">1 · Atual</button>
+    <button data-v="2">2 · Legenda de jogo</button>
+    <button data-v="3">3 · Feed motion</button>
+    <button data-v="4">4 · Roster + balões</button>
+    <button data-v="5">5 · Ticker minimal</button>
+    <button data-v="6">6 · Atual sem chips</button>
+    <span class="desc" id="desc"></span>
+    <span class="hint">teclas 1–5 ou ←/→</span>
+  </div>
+
+  <div class="viewport">
+    <div class="stage" id="stage">
+
+      <!-- V1: atual -->
+      <div class="variant v1 on" data-v="1">
+        <div class="wrap">
+          <div class="chips">
+            <span class="chip" style="--c:#ff5ec4">CAUGHTIN4K</span>
+            <span class="chip on" style="--c:#57d9a3">Haris</span>
+            <span class="chip" style="--c:#8de97c">Ibra_cuyy01</span>
+            <span class="chip muted" style="--c:#b8a04a">Lucas Pitchon</span>
+          </div>
+          <p class="line" style="--lc:#ff5ec4"><span class="avatar" style="--c:#ff5ec4">C</span><b>CAUGHTIN4K:</b> <span>Peguei 490 de tijolo, preciso de muni.</span></p>
+          <p class="line" style="--lc:#57d9a3"><span class="avatar" style="--c:#57d9a3">H</span><b>Haris:</b> <span>Tem gente rotacionando pra ilha, olha a esquerda.</span></p>
+          <p class="line partial" style="--lc:#57d9a3"><span class="avatar" style="--c:#57d9a3">H</span><b>Haris:</b> <span>Vou pegar a zona antes que<i class="caret"></i></span></p>
+        </div>
+      </div>
+
+      <!-- V2: legenda de jogo -->
+      <div class="variant v2" data-v="2">
+        <div class="wrap">
+          <div class="speaking-row">
+            <span class="dot" style="--c:#ff5ec4"></span>
+            <span class="dot on" style="--c:#57d9a3"></span>
+            <span class="dot" style="--c:#8de97c"></span>
+            <span class="dot" style="--c:#b8a04a; opacity:.15"></span>
+          </div>
+          <p class="line" style="--lc:#ff5ec4"><b>CAUGHTIN4K</b> — Peguei 490 de tijolo, preciso de muni.</p>
+          <p class="line partial" style="--lc:#57d9a3"><b>Haris</b> — <span>Tem gente rotacionando pra ilha, olha a esquerda<i class="caret"></i></span></p>
+        </div>
+      </div>
+
+      <!-- V3: feed esquerda com motion (preenchido via JS) -->
+      <div class="variant v3" data-v="3">
+        <div class="wrap" id="v3feed"></div>
+      </div>
+
+      <!-- V4: roster + balões -->
+      <div class="variant v4" data-v="4">
+        <div class="wrap">
+          <div class="row idle">
+            <span class="who" style="--c:#ff5ec4"><span class="avatar" style="--c:#ff5ec4">C</span><b>CAUGHTIN4K</b></span>
+          </div>
+          <div class="row speaking" style="--c:#57d9a3">
+            <span class="who" style="--c:#57d9a3"><span class="avatar" style="--c:#57d9a3">H</span><b>Haris</b></span>
+            <p class="bubble partial" style="--lc:#57d9a3">Tem gente rotacionando pra ilha, olha a esquerda<i class="caret"></i></p>
+          </div>
+          <div class="row idle">
+            <span class="who" style="--c:#8de97c"><span class="avatar" style="--c:#8de97c">I</span><b>Ibra_cuyy01</b></span>
+          </div>
+          <div class="row muted">
+            <span class="who" style="--c:#b8a04a"><span class="avatar" style="--c:#b8a04a">L</span><b>Lucas Pitchon</b></span>
+          </div>
+        </div>
+      </div>
+
+      <!-- V5: ticker minimal -->
+      <div class="variant v5" data-v="5">
+        <div class="wrap">
+          <div class="presence">
+            <span class="pdot" style="--c:#ff5ec4"></span>
+            <span class="pdot on" style="--c:#57d9a3"></span>
+            <span class="pdot" style="--c:#8de97c"></span>
+            <span class="pdot" style="--c:#b8a04a; opacity:.12"></span>
+          </div>
+          <div class="ticker" style="--lc:#57d9a3">
+            <span class="avatar" style="--c:#57d9a3">H</span>
+            <b>Haris:</b>
+            <span class="txt">Tem gente rotacionando pra ilha, olha a esquerda<i class="caret"></i></span>
+          </div>
+        </div>
+      </div>
+
+      <!-- V6: atual sem chips -->
+      <div class="variant v1 v6" data-v="6">
+        <div class="wrap">
+          <p class="line" style="--lc:#ff5ec4"><span class="avatar" style="--c:#ff5ec4">C</span><b>CAUGHTIN4K:</b> <span>Peguei 490 de tijolo, preciso de muni.</span></p>
+          <p class="line" style="--lc:#57d9a3"><span class="avatar" style="--c:#57d9a3">H</span><b>Haris:</b> <span>Tem gente rotacionando pra ilha, olha a esquerda.</span></p>
+          <p class="line partial" style="--lc:#57d9a3"><span class="avatar" style="--c:#57d9a3">H</span><b>Haris:</b> <span>Vou pegar a zona antes que<i class="caret"></i></span></p>
+        </div>
+      </div>
+
+    </div>
+  </div>
+
+<script>
+  const DESCS = {
+    1: "o design de hoje: chips de presença + pills empilhadas (canto sup. esquerdo)",
+    2: "estilo legenda de cinema/jogo: centralizada embaixo, mínimo de cromo, pontos de presença",
+    3: "feed na esquerda com MOTION: falas chegam palavra a palavra, mesma pessoa fala várias vezes, caixas antigas expiram",
+    4: "roster sempre visível à esquerda; balão aparece ao lado de quem está falando",
+    5: "pegada mínima: só a última fala em uma linha + pontos de quem está no canal",
+    6: "o atual sem a fileira de chips: só as pills de fala — presença aparece por quem fala",
+  };
+  const N = 6;
+  const buttons = [...document.querySelectorAll(".bar button")];
+  const variants = [...document.querySelectorAll(".variant")];
+  const desc = document.getElementById("desc");
+  let cur = 1;
+  function show(v) {
+    const was = cur;
+    cur = v;
+    buttons.forEach(b => b.classList.toggle("on", +b.dataset.v === v));
+    variants.forEach(el => el.classList.toggle("on", +el.dataset.v === v));
+    desc.textContent = DESCS[v];
+    if (v === 3) startMotion();
+    else if (was === 3) stopMotion();
+  }
+  buttons.forEach(b => b.addEventListener("click", () => show(+b.dataset.v)));
+
+  /* ---------- V3 motion engine ---------- */
+  const SPK = {
+    caught: { name: "CAUGHTIN4K", c: "#ff5ec4", i: "C" },
+    haris:  { name: "Haris",      c: "#57d9a3", i: "H" },
+    ibra:   { name: "Ibra_cuyy01",c: "#8de97c", i: "I" },
+  };
+  // [falante, texto, pausa depois em ms] — pausa negativa = próxima fala
+  // começa ANTES desta terminar (gente falando por cima, como na vida real)
+  const SCRIPT = [
+    ["haris",  "Eu amo esse lugar.", 500],
+    ["haris",  "Te vejo lá então.", 900],
+    ["caught", "Alguém tem muni de sniper?", 300],
+    ["ibra",   "Tenho, vem aqui do lado da árvore.", -600],
+    ["haris",  "Cuidado, tem gente atravessando o lago.", 400],
+    ["caught", "Onde?", 200],
+    ["haris",  "Na ilha do meio, atrás da pedra.", 250],
+    ["haris",  "Tô sem escudo, alguém tem mini?", 700],
+    ["ibra",   "Deixa comigo.", -400],
+    ["caught", "Zona fechando em um minuto, bora rotacionar.", 600],
+    ["haris",  "Pessoal.", 250],
+    ["haris",  "Sério, bora AGORA.", 1400],
+  ];
+  const WORD_MS = 190;      // cadência de palavras do STT
+  const LINE_TTL = 9000;    // quanto tempo a caixinha vive depois de final
+  const MAX_LINES = 6;
+  const feed = document.getElementById("v3feed");
+  let gen = 0;              // invalida timers antigos ao trocar de variante
+  const later = (fn, ms, g) => setTimeout(() => { if (g === gen) fn(); }, ms);
+
+  function addLine(spk, g) {
+    const slot = document.createElement("div");
+    slot.className = "slot";
+    slot.innerHTML =
+      `<div class="line partial" style="--lc:${spk.c}">
+         <span class="avatar" style="--c:${spk.c}">${spk.i}</span>
+         <span class="meta"><b>${spk.name}</b><span class="txt"><i class="caret"></i></span></span>
+       </div>`;
+    feed.appendChild(slot);
+    const line = slot.querySelector(".line");
+    line.style.opacity = "0"; line.style.transform = "translateX(-14px)";
+    void line.offsetWidth; // reflow síncrono: a transição roda mesmo sem foco na aba
+    line.style.opacity = "1"; line.style.transform = "none";
+    while (feed.children.length > MAX_LINES) feed.removeChild(feed.firstChild);
+    return slot;
+  }
+  function expire(slot, g) {
+    if (!slot.isConnected) return;
+    slot.style.height = slot.offsetHeight + "px";
+    requestAnimationFrame(() => { slot.classList.add("bye"); slot.style.height = "0px"; });
+    later(() => slot.remove(), 400, g);
+  }
+  function playUtterance(spk, text, g) {
+    const slot = addLine(spk, g);
+    const txt = slot.querySelector(".txt");
+    const words = text.split(" ");
+    words.forEach((w, k) => later(() => {
+      txt.innerHTML = words.slice(0, k + 1).join(" ") +
+        (k < words.length - 1 ? '<i class="caret"></i>' : "");
+      if (k === words.length - 1) {
+        slot.querySelector(".line").classList.remove("partial");
+        later(() => expire(slot, g), LINE_TTL, g);
+      }
+    }, k * (WORD_MS + (k % 3) * 25), g));
+    return words.length * WORD_MS; // duração aproximada da fala
+  }
+  function runScript(g) {
+    let t = 400;
+    for (const [id, text, gap] of SCRIPT) {
+      const dur = text.split(" ").length * WORD_MS;
+      later(() => playUtterance(SPK[id], text, g), t, g);
+      t += dur + gap;
+    }
+    later(() => runScript(g), t + 1500, g); // loop
+  }
+  function startMotion() { gen++; feed.innerHTML = ""; runScript(gen); }
+  function stopMotion() { gen++; feed.innerHTML = ""; }
+  addEventListener("keydown", e => {
+    if (e.key >= "1" && e.key <= String(N)) show(+e.key);
+    if (e.key === "ArrowRight") show(cur % N + 1);
+    if (e.key === "ArrowLeft") show((cur + N - 2) % N + 1);
+  });
+  show(1);
+
+  // scale the 1920×1080 stage to fit the viewport
+  const stage = document.getElementById("stage");
+  function fit() {
+    const vp = stage.parentElement.getBoundingClientRect();
+    const s = Math.min(vp.width / 1920, vp.height / 1080);
+    stage.style.transform = `translate(-50%, -50%) scale(${s})`;
+  }
+  addEventListener("resize", fit);
+  fit();
+</script>
+</body>
+</html>

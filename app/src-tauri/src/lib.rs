@@ -112,10 +112,10 @@ fn set_overlay_layout(
     let _ = app.emit("overlay_layout", layout);
 }
 
-/// Roster mode is a tall column; captions mode is a wide bottom band.
+/// Feed mode is a tall column; captions mode is a wide bottom band.
 fn apply_overlay_size(app: &AppHandle, layout: &str) {
     if let Some(overlay) = app.get_webview_window("overlay") {
-        let (w, h) = if layout == "roster" { (380.0, 620.0) } else { (760.0, 240.0) };
+        let (w, h) = if layout == "feed" { (520.0, 640.0) } else { (760.0, 240.0) };
         let _ = overlay.set_size(tauri::LogicalSize::new(w, h));
     }
 }
