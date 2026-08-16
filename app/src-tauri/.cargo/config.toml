@@ -1,0 +1,8 @@
+# Static CRT on Windows so the installer doesn't depend on the VC++
+# Redistributable being present on the user's machine. The flag propagates
+# to cmake-built C/C++ deps (whisper.cpp) via the cc crate.
+[target.x86_64-pc-windows-msvc]
+rustflags = ["-Ctarget-feature=+crt-static"]
+
+[target.aarch64-pc-windows-msvc]
+rustflags = ["-Ctarget-feature=+crt-static"]
