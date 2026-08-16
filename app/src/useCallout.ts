@@ -30,13 +30,19 @@ export type Status =
   | { state: "mock" };
 
 export type CaptionsStatus =
-  | { state: "model_missing"; path: string }
+  | { state: "downloading_models" }
   | { state: "loading_model" }
   | { state: "stt_ready" }
   | { state: "waiting_for_discord_audio" }
   | { state: "capturing"; native_rate: number }
   | { state: "capture_error"; message: string }
   | { state: "stt_error"; message: string };
+
+export type ModelDl =
+  | { state: "progress"; id: string; got: number; total: number }
+  | { state: "done"; id: string }
+  | { state: "failed"; id: string; message: string }
+  | { state: "all_ready" };
 
 export type CaptionLine = {
   speaker_ids: string[];

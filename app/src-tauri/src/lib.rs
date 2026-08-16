@@ -1,5 +1,6 @@
 mod align;
 mod capture;
+mod models;
 mod presence;
 mod rpc;
 mod settings;
@@ -53,7 +54,7 @@ impl ColorAssigner {
 #[derive(Debug, Clone, Serialize)]
 #[serde(tag = "state", rename_all = "snake_case")]
 pub enum CaptionsStatus {
-    ModelMissing { path: String },
+    DownloadingModels,
     LoadingModel,
     SttReady,
     WaitingForDiscordAudio,
@@ -290,55 +291,65 @@ fn spawn_pipeline(app: AppHandle, settings: settings::SettingsHandle) {
     let mut rx = rpc_tx.subscribe();
 
     // ── Captions source (capture → VAD → whisper), or mock ────────────────
+    // Models are provisioned first (first run downloads them with progress);
+    // caption events flow through a forwarding channel once the pipeline is up.
     let (cstatus_tx, mut cstatus_rx) = tokio::sync::mpsc::unbounded_channel::<CaptionsStatus>();
-    let mut stt_rx: tokio::sync::mpsc::UnboundedReceiver<SttEvent> = if mock {
-        MockStt::start(now_ms)
+    let data_dir = app.path().app_data_dir().unwrap_or_default();
+    let (stt_fwd_tx, mut stt_rx) = tokio::sync::mpsc::unbounded_channel::<SttEvent>();
+    if mock {
+        let mut mock_rx = MockStt::start(now_ms);
+        let tx = stt_fwd_tx.clone();
+        tauri::async_runtime::spawn(async move {
+            while let Some(ev) = mock_rx.recv().await {
+                if tx.send(ev).is_err() {
+                    break;
+                }
+            }
+        });
     } else {
-        let model_path = app
-            .path()
-            .app_data_dir()
-            .map(|d| d.join(MODEL_FILE))
-            .unwrap_or_default();
-        if model_path.is_file() {
-            let (feed, rx) = stt::spawn_whisper(model_path, settings.inner.clone(), cstatus_tx.clone());
+        let app2 = app.clone();
+        let settings2 = settings.clone();
+        let cstatus2 = cstatus_tx.clone();
+        let data_dir2 = data_dir.clone();
+        let tx = stt_fwd_tx.clone();
+        tauri::async_runtime::spawn(async move {
+            if !models::missing(&data_dir2).is_empty() {
+                let _ = cstatus2.send(CaptionsStatus::DownloadingModels);
+                let app3 = app2.clone();
+                if let Err(message) = models::ensure_all(data_dir2.clone(), move |ev| {
+                    let _ = app3.emit("model_dl", &ev);
+                })
+                .await
+                {
+                    let _ = cstatus2.send(CaptionsStatus::SttError { message });
+                    return;
+                }
+            }
+            let (feed, mut rx) = stt::spawn_whisper(
+                data_dir2.join(MODEL_FILE),
+                settings2.inner.clone(),
+                cstatus2.clone(),
+            );
             let feed = Mutex::new(feed);
-            capture::spawn(now_ms, cstatus_tx.clone(), move |chunk| {
+            capture::spawn(now_ms, cstatus2.clone(), move |chunk| {
                 if let Ok(mut f) = feed.lock() {
                     f.feed(chunk);
                 }
             });
-            rx
-        } else {
-            let _ = cstatus_tx.send(CaptionsStatus::ModelMissing {
-                path: model_path.to_string_lossy().to_string(),
-            });
-            let (_tx, rx) = tokio::sync::mpsc::unbounded_channel();
-            rx
-        }
-    };
-
-    // ── Join + fan out to the UI ───────────────────────────────────────────
-    // Voiceprint layer (attribution 2.0): optional — disabled if the speaker
-    // model isn't on disk.
-    let data_dir = app.path().app_data_dir().unwrap_or_default();
-    let mut voice = {
-        let p = data_dir.join(SPEAKER_MODEL_FILE);
-        if p.is_file() {
-            match stt::voiceid::VoiceId::load(&p) {
-                Ok(v) => {
-                    eprintln!("[voice] speaker model loaded");
-                    Some(v)
-                }
-                Err(e) => {
-                    eprintln!("[voice] {e}");
-                    None
+            while let Some(ev) = rx.recv().await {
+                if tx.send(ev).is_err() {
+                    break;
                 }
             }
-        } else {
-            eprintln!("[voice] no speaker model at {p:?} — voiceprints disabled");
-            None
-        }
-    };
+        });
+    }
+
+    // ── Join + fan out to the UI ───────────────────────────────────────────
+    // Voiceprint layer: loaded lazily — on first run the speaker model may
+    // still be downloading when this task starts.
+    let speaker_model_path = data_dir.join(SPEAKER_MODEL_FILE);
+    let mut voice: Option<stt::voiceid::VoiceId> = None;
+    let mut voice_load_failed = false;
     let mut voice_store = stt::voiceid::VoiceStore::load(data_dir.join("voiceprints.json"));
 
     tauri::async_runtime::spawn(async move {
@@ -399,6 +410,18 @@ fn spawn_pipeline(app: AppHandle, settings: settings::SettingsHandle) {
                         }
                         SttEvent::Final { text, words, pcm, t_start_ms, t_end_ms } => {
                             eprintln!("[callout] final: {text:?}");
+                            if voice.is_none() && !voice_load_failed && speaker_model_path.is_file() {
+                                match stt::voiceid::VoiceId::load(&speaker_model_path) {
+                                    Ok(v) => {
+                                        eprintln!("[voice] speaker model loaded");
+                                        voice = Some(v);
+                                    }
+                                    Err(e) => {
+                                        eprintln!("[voice] {e}");
+                                        voice_load_failed = true;
+                                    }
+                                }
+                            }
                             let mut lines = align::attribute_final(&log, &roster, &text, &words, t_start_ms, t_end_ms);
                             refine_with_voice(
                                 &mut lines,

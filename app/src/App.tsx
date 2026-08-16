@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { useCallout, type CaptionsStatus, type Status } from "./useCallout";
+import { listen } from "@tauri-apps/api/event";
+import { useCallout, type CaptionsStatus, type ModelDl, type Status } from "./useCallout";
 import "./App.css";
 
 const LANGUAGES = [
@@ -20,7 +21,7 @@ const STATUS_TEXT: Record<Status["state"], string> = {
 };
 
 const CAPTIONS_TEXT: Record<CaptionsStatus["state"], string> = {
-  model_missing: "speech model missing",
+  downloading_models: "downloading speech models…",
   loading_model: "loading speech model…",
   stt_ready: "speech model ready",
   waiting_for_discord_audio: "waiting for Discord audio…",
@@ -33,10 +34,22 @@ function App() {
   const { status, captions, channel, members, speaking, finals, partial } = useCallout();
   const [languages, setLanguages] = useState<string[]>([]);
   const [opacity, setOpacity] = useState(0.92);
+  const [dl, setDl] = useState<{ id: string; pct: number } | null>(null);
 
   useEffect(() => {
     invoke<string[]>("get_languages").then(setLanguages).catch(() => {});
     invoke<number>("get_overlay_opacity").then(setOpacity).catch(() => {});
+    const unDl = listen<ModelDl>("model_dl", (e) => {
+      const ev = e.payload;
+      if (ev.state === "progress") {
+        setDl({ id: ev.id, pct: Math.min(100, Math.round((100 * ev.got) / Math.max(ev.total, 1))) });
+      } else if (ev.state === "all_ready" || ev.state === "failed") {
+        setDl(null);
+      }
+    });
+    return () => {
+      unDl.then((f) => f());
+    };
   }, []);
 
   const changeOpacity = (value: number) => {
@@ -68,11 +81,12 @@ function App() {
         {captions && (
           <span
             className={"stage" + (captions.state === "capturing" ? " ok" : "")}
-            title={"message" in captions ? captions.message : "path" in captions ? captions.path : undefined}
+            title={"message" in captions ? captions.message : undefined}
           >
             🎙 {CAPTIONS_TEXT[captions.state]}
           </span>
         )}
+        {dl && <span className="stage">⬇︎ {dl.id} {dl.pct}%</span>}
         <span className="stage" title="Global hotkey: toggle the overlay">⌘⇧C overlay</span>
         <button
           className="lang"
