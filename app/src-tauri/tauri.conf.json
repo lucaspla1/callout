@@ -13,9 +13,10 @@
     "macOSPrivateApi": true,
     "windows": [
       {
-        "title": "Unmute — dev preview",
-        "width": 900,
-        "height": 640
+        "title": "Unmute",
+        "width": 440,
+        "height": 620,
+        "resizable": false
       },
       {
         "label": "overlay",
@@ -38,7 +39,12 @@
   },
   "bundle": {
     "active": true,
-    "targets": "all",
+    "targets": ["app", "dmg", "nsis"],
+    "windows": {
+      "nsis": {
+        "installMode": "currentUser"
+      }
+    },
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",

@@ -7,6 +7,7 @@ mod settings;
 mod stt;
 
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
 use std::time::Instant;
 
@@ -110,6 +111,20 @@ fn set_overlay_layout(
     let layout = state.overlay_layout();
     apply_overlay_size(&app, &layout);
     let _ = app.emit("overlay_layout", layout);
+}
+
+/// "Forget learned voices": set by the command, honored by the pipeline loop,
+/// which drops its in-memory prints before any enroll can rewrite the file.
+static CLEAR_VOICEPRINTS: AtomicBool = AtomicBool::new(false);
+
+#[tauri::command]
+fn clear_voiceprints(app: AppHandle) {
+    CLEAR_VOICEPRINTS.store(true, Ordering::SeqCst);
+    // Delete right away too, so the wipe holds even while no call is active.
+    if let Ok(dir) = app.path().app_data_dir() {
+        let _ = std::fs::remove_file(dir.join("voiceprints.json"));
+        let _ = std::fs::remove_file(dir.join("voiceprints.tmp"));
+    }
 }
 
 /// Feed mode is a tall column; captions mode is a wide bottom band.
@@ -222,7 +237,8 @@ pub fn run() {
             set_caption_identity,
             get_overlay_layout,
             set_overlay_layout,
-            toggle_move_overlay
+            toggle_move_overlay,
+            clear_voiceprints
         ])
         .setup(|app| {
             let data_dir = app.path().app_data_dir().unwrap_or_default();
@@ -435,6 +451,10 @@ fn spawn_pipeline(app: AppHandle, settings: settings::SettingsHandle) {
             let _ = app.emit("status", &serde_json::json!({ "state": "mock" }));
         }
         loop {
+            if CLEAR_VOICEPRINTS.swap(false, Ordering::SeqCst) {
+                voice_store.clear();
+                eprintln!("[callout] voiceprints cleared");
+            }
             tokio::select! {
                 Ok(out) = rx.recv() => match out {
                     rpc::RpcOut::Presence(mut ev) => {

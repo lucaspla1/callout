@@ -34,6 +34,12 @@ fn is_known_hallucination(text: &str) -> bool {
         "obrigada por assistir",
         "gracias por ver",
         "legendas pela comunidade",
+        // PT subtitle-credit family — "Legenda por Sônia Ruberti" etc. shows up
+        // on Discord's mute/unmute beeps.
+        "legenda por",
+        "legendas por",
+        "legendado por",
+        "legendas e revisão",
         "subtítulos realizados por",
         "subtitulos realizados por",
         "sous-titres",
@@ -387,7 +393,9 @@ fn collect_text(state: &whisper_rs::WhisperState) -> String {
 fn is_noise_final(text: &str) -> bool {
     matches!(
         text.trim().to_lowercase().trim_end_matches(['.', '!']).trim(),
-        "you" | "thank you" | "♪" | "obrigado" | "obrigada" | "gracias"
+        // "música"/"music" are whisper's [music] tags leaking as words on beeps.
+        "you" | "thank you" | "♪" | "obrigado" | "obrigada" | "gracias" | "música" | "musica"
+            | "music"
     )
 }
 

@@ -22,6 +22,10 @@ pub const MIN_ENROLL_MS: u64 = 1_500;
 pub const MIN_MATCH_MS: u64 = 700;
 /// Cap embedding input (cost control); the voice is stable within seconds.
 const MAX_EMBED_SAMPLES: usize = 8 * 16_000;
+/// Most voiceprints kept on disk. Big public channels would otherwise grow the
+/// store without bound; regulars refresh their timestamp, one-off strangers
+/// age out first.
+const MAX_STORED_PRINTS: usize = 100;
 
 pub struct VoiceId {
     session: Session,
@@ -77,6 +81,16 @@ struct StoredPrint {
     /// Running mean of enrolled embeddings (re-normalized on use).
     centroid: Vec<f32>,
     samples: u32,
+    /// Last enroll time (unix ms) — eviction order when the store is full.
+    #[serde(default)]
+    updated_ms: u64,
+}
+
+fn unix_ms() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0)
 }
 
 /// Per-user voiceprints, persisted locally. Derived vectors only — never audio.
@@ -106,9 +120,51 @@ impl VoiceStore {
             }
             entry.samples = entry.samples.saturating_add(1);
         }
-        if let Ok(json) = serde_json::to_string(&self.prints) {
-            let _ = std::fs::write(&self.path, json);
+        entry.updated_ms = unix_ms();
+        while self.prints.len() > MAX_STORED_PRINTS {
+            let oldest = self
+                .prints
+                .iter()
+                .min_by_key(|(_, p)| p.updated_ms)
+                .map(|(id, _)| id.clone());
+            match oldest {
+                Some(id) => self.prints.remove(&id),
+                None => break,
+            };
         }
+        self.save();
+    }
+
+    /// Owner-only file, written atomically. The embeddings identify people, so
+    /// the store must not be readable by other local accounts.
+    fn save(&self) {
+        let Ok(json) = serde_json::to_string(&self.prints) else { return };
+        let tmp = self.path.with_extension("tmp");
+        #[cfg(unix)]
+        let written = {
+            use std::io::Write;
+            use std::os::unix::fs::OpenOptionsExt;
+            std::fs::OpenOptions::new()
+                .write(true)
+                .create(true)
+                .truncate(true)
+                .mode(0o600)
+                .open(&tmp)
+                .and_then(|mut f| f.write_all(json.as_bytes()))
+                .is_ok()
+        };
+        #[cfg(not(unix))]
+        let written = std::fs::write(&tmp, &json).is_ok(); // %APPDATA% ACLs are per-user already
+        if written {
+            let _ = std::fs::rename(&tmp, &self.path);
+        }
+    }
+
+    /// "Forget learned voices": drop every print and remove the file.
+    pub fn clear(&mut self) {
+        self.prints.clear();
+        let _ = std::fs::remove_file(&self.path);
+        let _ = std::fs::remove_file(self.path.with_extension("tmp"));
     }
 
     pub fn samples(&self, user_id: &str) -> u32 {
@@ -222,6 +278,24 @@ mod tests {
         // Persists across load.
         let store2 = VoiceStore::load(path);
         assert_eq!(store2.samples("1"), 2);
+    }
+
+    #[test]
+    fn store_caps_and_clears() {
+        let dir = std::env::temp_dir().join(format!("callout-vs-cap-{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&dir);
+        let path = dir.join("voiceprints.json");
+        let _ = std::fs::remove_file(&path);
+        let mut store = VoiceStore::load(path.clone());
+        for i in 0..(MAX_STORED_PRINTS + 5) {
+            store.enroll(&format!("u{i}"), &[1.0, 0.0]);
+        }
+        assert_eq!(store.prints.len(), MAX_STORED_PRINTS);
+        // The newest survives the eviction; the store never exceeds the cap.
+        assert!(store.samples(&format!("u{}", MAX_STORED_PRINTS + 4)) > 0);
+        store.clear();
+        assert_eq!(store.prints.len(), 0);
+        assert!(!path.exists());
     }
 
     #[test]

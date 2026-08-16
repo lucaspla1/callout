@@ -1,17 +1,15 @@
+// The main window is just settings + status. Captions live in the overlay.
 import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { useCallout, type CaptionsStatus, type ModelDl, type Status } from "./useCallout";
-import { SpeakerIdentity, type IdentityMode } from "./SpeakerIdentity";
+import { type IdentityMode } from "./SpeakerIdentity";
 import "./App.css";
 
-const IDENTITY_CYCLE: IdentityMode[] = ["name", "avatar", "both"];
-const IDENTITY_LABEL: Record<IdentityMode, string> = { name: "Aa", avatar: "◉", both: "◉Aa" };
-
 const LANGUAGES = [
-  { code: "en", label: "EN" },
-  { code: "pt", label: "PT" },
-  { code: "es", label: "ES" },
+  { code: "en", label: "English" },
+  { code: "pt", label: "Português" },
+  { code: "es", label: "Español" },
 ];
 
 const STATUS_TEXT: Record<Status["state"], string> = {
@@ -25,35 +23,23 @@ const STATUS_TEXT: Record<Status["state"], string> = {
 };
 
 const CAPTIONS_TEXT: Record<CaptionsStatus["state"], string> = {
-  downloading_models: "downloading speech models…",
-  loading_model: "loading speech model…",
-  stt_ready: "speech model ready",
-  waiting_for_discord_audio: "waiting for Discord audio…",
-  capturing: "listening to Discord",
-  capture_error: "capture error",
-  stt_error: "speech engine error",
+  downloading_models: "Downloading speech models…",
+  loading_model: "Loading speech model…",
+  stt_ready: "Speech model ready",
+  waiting_for_discord_audio: "Waiting for Discord audio…",
+  capturing: "Listening to Discord",
+  capture_error: "Capture error",
+  stt_error: "Speech engine error",
 };
 
 function App() {
-  const { status, captions, channel, members, speaking, finals, partial } = useCallout();
+  const { status, captions, channel, members } = useCallout();
   const [languages, setLanguages] = useState<string[]>([]);
   const [opacity, setOpacity] = useState(0.92);
   const [dl, setDl] = useState<{ id: string; pct: number } | null>(null);
   const [fontPx, setFontPx] = useState(16);
   const [identity, setIdentity] = useState<IdentityMode>("name");
   const [layout, setLayout] = useState<"captions" | "feed">("captions");
-
-  const cycleIdentity = () => {
-    const next = IDENTITY_CYCLE[(IDENTITY_CYCLE.indexOf(identity) + 1) % IDENTITY_CYCLE.length];
-    setIdentity(next);
-    invoke("set_caption_identity", { mode: next }).catch(() => {});
-  };
-
-  const toggleLayout = () => {
-    const next = layout === "feed" ? "captions" : "feed";
-    setLayout(next);
-    invoke("set_overlay_layout", { layout: next }).catch(() => {});
-  };
 
   useEffect(() => {
     invoke<string[]>("get_languages").then(setLanguages).catch(() => {});
@@ -74,16 +60,22 @@ function App() {
     };
   }, []);
 
+  const setLayoutAnd = (next: "captions" | "feed") => {
+    setLayout(next);
+    invoke("set_overlay_layout", { layout: next }).catch(() => {});
+  };
+  const setIdentityAnd = (next: IdentityMode) => {
+    setIdentity(next);
+    invoke("set_caption_identity", { mode: next }).catch(() => {});
+  };
   const changeOpacity = (value: number) => {
     setOpacity(value);
     invoke("set_overlay_opacity", { opacity: value }).catch(() => {});
   };
-
   const changeFont = (value: number) => {
     setFontPx(value);
     invoke("set_caption_font", { px: value }).catch(() => {});
   };
-
   const toggleLanguage = (code: string) => {
     setLanguages((prev) => {
       const next = prev.includes(code) ? prev.filter((c) => c !== code) : [...prev, code];
@@ -99,44 +91,73 @@ function App() {
         ? `Authorization failed: ${status.message}`
         : STATUS_TEXT[status.state]
     : "Starting…";
+  const capturing = captions?.state === "capturing";
 
   return (
-    <main className="shell">
-      <header className="bar">
+    <main className="settings">
+      <header className="settings-head">
         <span className="brand">Unmute</span>
-        <span className={"stage" + (status?.state === "ready" ? " ok" : "")}>{statusText}</span>
-        {captions && (
-          <span
-            className={"stage" + (captions.state === "capturing" ? " ok" : "")}
-            title={"message" in captions ? captions.message : undefined}
-          >
-            🎙 {CAPTIONS_TEXT[captions.state]}
+        <div className="status-lines">
+          <span className={"status-line" + (status?.state === "ready" ? " ok" : "")}>
+            <i className="status-dot" />
+            {statusText}
           </span>
-        )}
-        {dl && <span className="stage">⬇︎ {dl.id} {dl.pct}%</span>}
-        <span className="stage" title="Global hotkey: toggle the overlay">⌘⇧C overlay</span>
-        <button
-          className="lang"
-          title="Unlock the overlay to drag it (also ⌘⇧O); click again to lock"
-          onClick={() => invoke("toggle_move_overlay").catch(() => {})}
-        >
-          ✥ move
-        </button>
-        <button
-          className="lang"
-          title="Speaker identity on captions: name / avatar / both"
-          onClick={cycleIdentity}
-        >
-          {IDENTITY_LABEL[identity]}
-        </button>
-        <button
-          className="lang"
-          title="Overlay layout: stacked caption pills, or chat-style feed with avatar + name above the text"
-          onClick={toggleLayout}
-        >
-          {layout === "feed" ? "☰ feed" : "▬ pills"}
-        </button>
-        <span className="opacity-slider" title="Overlay background opacity">
+          {captions && (
+            <span
+              className={"status-line" + (capturing ? " ok" : "")}
+              title={"message" in captions ? captions.message : undefined}
+            >
+              <i className="status-dot" />
+              {CAPTIONS_TEXT[captions.state]}
+            </span>
+          )}
+          <span className={"status-line" + (channel ? " ok" : "")}>
+            <i className="status-dot" />
+            {channel ? `${channel} · ${members.length} in call` : "Not in a voice channel"}
+          </span>
+        </div>
+      </header>
+
+      {status?.state === "awaiting_approval" && (
+        <div className="hint">
+          Discord is showing an authorization prompt — switch to Discord and click <b>Authorize</b>.
+        </div>
+      )}
+      {dl && (
+        <div className="hint">
+          ⬇︎ Downloading {dl.id} — {dl.pct}%
+        </div>
+      )}
+
+      <section className="group">
+        <h2>Overlay</h2>
+        <div className="row">
+          <span className="row-label">Layout</span>
+          <span className="segmented">
+            <button className={layout === "captions" ? "on" : ""} onClick={() => setLayoutAnd("captions")}>
+              ▬ Pills
+            </button>
+            <button className={layout === "feed" ? "on" : ""} onClick={() => setLayoutAnd("feed")}>
+              ☰ Feed
+            </button>
+          </span>
+        </div>
+        <div className="row">
+          <span className="row-label">Speaker label</span>
+          <span className="segmented">
+            <button className={identity === "name" ? "on" : ""} onClick={() => setIdentityAnd("name")}>
+              Name
+            </button>
+            <button className={identity === "avatar" ? "on" : ""} onClick={() => setIdentityAnd("avatar")}>
+              Avatar
+            </button>
+            <button className={identity === "both" ? "on" : ""} onClick={() => setIdentityAnd("both")}>
+              Both
+            </button>
+          </span>
+        </div>
+        <div className="row">
+          <span className="row-label">Background</span>
           <input
             type="range"
             min={0.2}
@@ -145,9 +166,10 @@ function App() {
             value={opacity}
             onChange={(e) => changeOpacity(Number(e.target.value))}
           />
-        </span>
-        <span className="opacity-slider" title="Caption text size">
-          A
+          <span className="row-value">{Math.round(opacity * 100)}%</span>
+        </div>
+        <div className="row">
+          <span className="row-label">Text size</span>
           <input
             type="range"
             min={12}
@@ -156,69 +178,47 @@ function App() {
             value={fontPx}
             onChange={(e) => changeFont(Number(e.target.value))}
           />
-        </span>
-        {channel ? (
-          <span className="channel">
-            🔊 {channel}
-            <span className="chips">
-              {[...members]
-                .sort((a, b) => a.display_name.localeCompare(b.display_name))
-                .map((m) => (
-                  <span
-                    key={m.id}
-                    className={"chip" + (speaking.includes(m.id) ? " on" : "") + (m.muted ? " muted" : "")}
-                    style={{ ["--c" as string]: m.color }}
-                  >
-                    {m.display_name}
-                  </span>
-                ))}
-            </span>
-          </span>
-        ) : (
-          <span className="channel dim">not in a voice channel</span>
-        )}
-        <span className="langs" title="Caption languages — none checked = detect any; several = detect within the set">
-          {LANGUAGES.map((l) => (
-            <button
-              key={l.code}
-              className={"lang" + (languages.includes(l.code) ? " on" : "")}
-              onClick={() => toggleLanguage(l.code)}
-            >
-              {l.label}
-            </button>
-          ))}
-          {languages.length === 0 && <span className="lang-hint">auto</span>}
-        </span>
-      </header>
-
-      {status?.state === "awaiting_approval" && (
-        <div className="hint">
-          Discord is showing an authorization prompt — switch to Discord and click <b>Authorize</b>.
+          <span className="row-value">{fontPx}px</span>
         </div>
-      )}
-
-      <section className="game" aria-label="Pretend this is your game">
-        <div className="captions" role="log" aria-live="polite">
-          {finals.map((l) => (
-            <p key={l.t_start_ms + l.text} className="line" style={{ ["--lc" as string]: l.color }}>
-              <SpeakerIdentity line={l} members={members} mode={identity} />
-              <span>{l.text}</span>
-            </p>
-          ))}
-          {partial && (
-            <p className="line partial" style={{ ["--lc" as string]: partial.color }}>
-              <SpeakerIdentity line={partial} members={members} mode={identity} />
-              <span>
-                {partial.text}
-                <i className="caret" />
-              </span>
-            </p>
-          )}
-          {finals.length === 0 && !partial && (
-            <p className="line dim">waiting for someone to talk…</p>
-          )}
+        <div className="row">
+          <span className="row-label">Position</span>
+          <button className="action" onClick={() => invoke("toggle_move_overlay").catch(() => {})}>
+            ✥ Unlock &amp; drag
+          </button>
         </div>
       </section>
+
+      <section className="group">
+        <h2>Speech</h2>
+        <div className="row">
+          <span className="row-label">Languages</span>
+          <span className="segmented">
+            {LANGUAGES.map((l) => (
+              <button
+                key={l.code}
+                className={languages.includes(l.code) ? "on" : ""}
+                onClick={() => toggleLanguage(l.code)}
+              >
+                {l.label}
+              </button>
+            ))}
+          </span>
+        </div>
+        <p className="row-hint">
+          {languages.length === 0
+            ? "None selected — every language is auto-detected."
+            : "Detection is restricted to the selected languages."}
+        </p>
+      </section>
+
+      <footer className="shortcuts">
+        <span>
+          <b>⌘⇧C</b> show / hide overlay
+        </span>
+        <span>
+          <b>⌘⇧O</b> unlock / lock position
+        </span>
+      </footer>
     </main>
   );
 }

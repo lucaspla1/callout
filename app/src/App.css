@@ -36,103 +36,119 @@ html, body { margin: 0; background: transparent; }
   user-select: none;
 }
 
-.opacity-slider { display: flex; align-items: center; gap: 6px; font-size: 11px; color: #9ba0ae; }
-.opacity-slider input { width: 80px; accent-color: #7a87f8; }
-
-.shell {
-  height: 100vh;
+/* ── Main window: settings only ──────────────────────────────────────── */
+.settings {
+  min-height: 100vh;
   display: flex;
   flex-direction: column;
+  gap: 18px;
+  padding: 22px 24px;
   background: #17181d;
   color: #e9eaf0;
-}
-
-.bar {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  padding: 10px 16px;
-  background: #1f2128;
-  border-bottom: 1px solid #343846;
   font-size: 13px;
 }
 
-.brand { font-weight: 700; letter-spacing: 0.02em; }
+.settings-head { display: flex; flex-direction: column; gap: 10px; }
+.brand { font-weight: 800; font-size: 22px; letter-spacing: 0.01em; }
 
-.stage {
-  font-size: 11px;
-  font-weight: 600;
-  color: #7a87f8;
-  background: #262a44;
-  border-radius: 999px;
-  padding: 2px 9px;
+.status-lines { display: flex; flex-direction: column; gap: 4px; }
+.status-line {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: #9ba0ae;
+  font-size: 12px;
 }
-.stage.ok { color: #3bc272; background: #1d3327; }
+.status-line.ok { color: #cfd3dd; }
+.status-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #565b68;
+  flex: none;
+}
+.status-line.ok .status-dot { background: #3bc272; }
 
 .hint {
   background: #3a2c17;
   color: #f0a44a;
   font-size: 13px;
-  padding: 8px 16px;
-  border-bottom: 1px solid #343846;
+  padding: 10px 14px;
+  border-radius: 10px;
 }
 
-.langs { display: flex; gap: 4px; align-items: center; margin-left: auto; }
-.lang {
-  font: inherit;
+.group {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  background: #1f2128;
+  border: 1px solid #2a2d38;
+  border-radius: 14px;
+  padding: 14px 16px 12px;
+}
+.group h2 {
+  margin: 0 0 6px;
   font-size: 11px;
-  font-weight: 700;
+  font-weight: 800;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
   color: #9ba0ae;
+}
+
+.row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-height: 38px;
+}
+.row-label { width: 106px; flex: none; color: #cfd3dd; font-weight: 600; }
+.row-value { width: 42px; text-align: right; color: #9ba0ae; font-variant-numeric: tabular-nums; }
+.row input[type="range"] { flex: 1; accent-color: #7a87f8; }
+.row-hint { margin: 2px 0 4px; color: #707585; font-size: 12px; font-style: italic; }
+
+.segmented {
+  display: flex;
+  gap: 4px;
   background: #262933;
   border: 1px solid #343846;
+  border-radius: 9px;
+  padding: 3px;
+}
+.segmented button {
+  font: inherit;
+  font-size: 12px;
+  font-weight: 700;
+  color: #9ba0ae;
+  background: transparent;
+  border: none;
   border-radius: 6px;
-  padding: 2px 8px;
+  padding: 4px 12px;
   cursor: pointer;
 }
-.lang.on { color: #7a87f8; border-color: #7a87f8; background: #262a44; }
-.lang:focus-visible { outline: 2px solid #7a87f8; outline-offset: 1px; }
-.lang-hint { font-size: 11px; color: #9ba0ae; font-style: italic; margin-left: 2px; }
+.segmented button.on { color: #fff; background: #4753e6; }
+.segmented button:focus-visible { outline: 2px solid #7a87f8; outline-offset: 1px; }
 
-.channel { display: flex; align-items: center; gap: 10px; color: #9ba0ae; }
-.channel.dim { font-style: italic; }
-
-.chips { display: flex; gap: 6px; }
-
-.chip {
-  --c: #9ba0ae;
-  color: var(--c);
-  border: 1.5px solid transparent;
-  border-radius: 999px;
-  padding: 1px 10px;
+.action {
+  font: inherit;
   font-size: 12px;
-  font-weight: 600;
+  font-weight: 700;
+  color: #cfd3dd;
   background: #262933;
-  transition: border-color 120ms ease;
-  max-width: 150px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  border: 1px solid #343846;
+  border-radius: 9px;
+  padding: 6px 14px;
+  cursor: pointer;
 }
-.chip.on {
-  background: var(--c);
-  border-color: var(--c);
-  color: #17181d;
-}
-.chip.muted { opacity: 0.45; text-decoration: line-through; }
+.action:hover { border-color: #7a87f8; color: #fff; }
 
-/* stand-in for the game behind the overlay */
-.game {
-  flex: 1;
-  position: relative;
-  background:
-    radial-gradient(1200px 500px at 70% 20%, #232a3a 0%, transparent 60%),
-    radial-gradient(900px 400px at 20% 80%, #1d2430 0%, transparent 55%),
-    #14161b;
+.shortcuts {
+  margin-top: auto;
   display: flex;
-  align-items: flex-end;
-  justify-content: center;
-  padding-bottom: 48px;
+  gap: 18px;
+  color: #707585;
+  font-size: 12px;
 }
+.shortcuts b { color: #9ba0ae; font-weight: 700; }
 
 /* Captions: one translucent pill per line (background hugs the text), with the
    speaker's color as a left stripe — readable identity even with long names. */
