@@ -91,7 +91,7 @@ Compatibility note: the visible product is UNMUTE, but `app.callout.desktop`, ex
 
 - The 2026-08-17 legal-hygiene audit is **RED for public/commercial release** while development may continue. See `docs/legal/RELEASE_REVIEW.md`.
 - The repository is currently MIT-licensed. MIT explicitly permits commercial use and sale.
-- The maintainer wants stronger protection against resale/commercial exploitation. That requires a deliberate license decision; a noncommercial restriction makes the project source-available, not OSI open source. See `docs/legal/LICENSING.md`.
+- The maintainer chose licensing direction B on 2026-08-17: preserve personal, nonprofit, community, and internal workplace accessibility use while blocking resale, white-labeling, paid embedding, and competing products/services. Exact counsel-reviewed source-available terms are still pending; `LICENSE` remains MIT until the change can be made atomically. See `docs/legal/LICENSING.md`.
 - Discord app approval is a release dependency. The existing `CALLOUT_CLIENT_ID` override can support controlled development with an app the tester is authorized to operate, but it must not be marketed as a public workaround for Discord's tester limit without written confirmation from Discord.
 - OAuth tokens are currently persisted in plaintext, voice embeddings are enrolled and persisted without a separate opt-in, and stderr contains transcripts/identifiers. These contradict the intended privacy posture and block external distribution.
 - Existing packaged artifacts do not include the product license, privacy policy, or complete third-party/model notices. A per-target dependency inventory and packaged-artifact gate are required.

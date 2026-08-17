@@ -14,6 +14,14 @@ Treat already published MIT versions and existing copies as still carrying their
 
 “Source code is public” and “open source” are not synonyms. An OSI-style open-source license cannot prohibit business use or resale. If UNMUTE prohibits commercial use, describe it as **source-available** (or “source-visible under a noncommercial license”), not open source.
 
+## Maintainer direction
+
+**Decision recorded 2026-08-17: option B.** Future licensing should allow personal, community, nonprofit, and internal accessibility use — including use by an employee at a for-profit organization — while prohibiting resale, white-label distribution, paid embedding, and competing products or hosted services built from UNMUTE.
+
+Incidental commercial context, such as a monetized streamer using captions for their own access, should not by itself become a prohibited competing use. Selling UNMUTE, charging for access to a derivative, bundling it into a paid product, or using its code to offer a competing caption service should require separate written permission.
+
+This records the business intent, not the final legal text. `LICENSE` remains MIT until counsel selects or approves exact standardized source-available terms, confirms definitions such as “competing,” “product,” and “service,” and the full relicensing change set is ready. PolyForm Shield/Perimeter are candidates to evaluate; PolyForm Noncommercial is broader than the chosen intent because it can also restrict benign internal commercial use.
+
 ## Practical options
 
 | Goal | Direction | What it does not do |
@@ -28,15 +36,15 @@ Avoid inventing a custom one-paragraph “no selling” addendum. Standardized t
 
 ## Recommended decision path
 
-If the actual intent is “people can use, study, modify, and share UNMUTE for personal/accessibility/community purposes, but must ask Lucas before any commercial use,” PolyForm Noncommercial 1.0.0 is the closest standardized starting point. It permits noncommercial changes and distribution and can coexist with separately negotiated commercial permission.
+The chosen intent is narrower than “no commercial use”: protect accessibility use while blocking resale, white-labeling, paid embedding, and competing offerings. Start counsel review with a competitor-focused standardized source-available license such as PolyForm Shield/Perimeter rather than PolyForm Noncommercial.
 
-Before adopting it, answer these business questions:
+Before adopting exact terms, settle these implementation questions with counsel:
 
-1. Should a company be allowed to use UNMUTE internally for an employee's accessibility, even if the company never sells it?
-2. Should nonprofits, schools, government, streamers with ad revenue, esports teams, gaming cafés, and paid accessibility consultants be allowed?
+1. How should “competing product or service” be defined without accidentally blocking integrations and accessibility research?
+2. Which forms of paid support, consulting, app bundling, gaming-café use, and esports-team use require permission?
 3. Should noncommercial forks and modified binaries be redistributable?
-4. Do you want to offer paid commercial exceptions, or prohibit them entirely?
-5. Is the concern commercial use generally, or specifically a third party reselling/white-labeling a competing UNMUTE product?
+4. What commercial-exception process, pricing, and trademark permission should exist?
+5. What version/commit starts the new grant, and how will earlier MIT code remain identifiable?
 
 The answers may point to a narrower competition restriction or a trademark/distribution policy instead of a blanket noncommercial license.
 
