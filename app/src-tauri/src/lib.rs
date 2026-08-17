@@ -137,6 +137,32 @@ fn apply_overlay_size(app: &AppHandle, layout: &str) {
             (760.0, 240.0)
         };
         let _ = overlay.set_size(tauri::LogicalSize::new(w, h));
+        // Growing the window (captions → feed) can push it past the screen
+        // edge — most of the feed column was rendering offscreen.
+        clamp_overlay_into_screen(&overlay);
+    }
+}
+
+/// Keep the overlay fully inside its monitor's bounds (a saved position from
+/// another monitor/layout, or a resize, can strand it offscreen).
+fn clamp_overlay_into_screen(overlay: &tauri::WebviewWindow) {
+    let monitor = overlay
+        .current_monitor()
+        .ok()
+        .flatten()
+        .or_else(|| overlay.primary_monitor().ok().flatten());
+    let Some(monitor) = monitor else { return };
+    let (Ok(pos), Ok(size)) = (overlay.outer_position(), overlay.outer_size()) else {
+        return;
+    };
+    let m_pos = monitor.position();
+    let m_size = monitor.size();
+    let max_x = m_pos.x + (m_size.width as i32 - size.width as i32).max(0);
+    let max_y = m_pos.y + (m_size.height as i32 - size.height as i32).max(0);
+    let x = pos.x.clamp(m_pos.x, max_x);
+    let y = pos.y.clamp(m_pos.y, max_y);
+    if x != pos.x || y != pos.y {
+        let _ = overlay.set_position(tauri::PhysicalPosition::new(x, y));
     }
 }
 
@@ -253,9 +279,20 @@ pub fn run() {
             diag::init(&data_dir);
             let settings = settings::SettingsHandle::load(data_dir);
             app.manage(settings.clone());
+            setup_tray(app.handle())?;
             setup_overlay_window(app.handle(), &settings);
             spawn_pipeline(app.handle().clone(), settings);
             Ok(())
+        })
+        // Closing the settings window quits nothing: captions must survive it.
+        // The app lives in the tray; Quit is a deliberate act there.
+        .on_window_event(|window, event| {
+            if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                if window.label() == "main" {
+                    api.prevent_close();
+                    let _ = window.hide();
+                }
+            }
         })
         .build(tauri::generate_context!())
         .expect("error while running tauri application")
@@ -351,6 +388,40 @@ fn refine_with_voice(
 }
 
 /// Overlay: click-through, at the saved position or parked bottom-center.
+/// Tray icon (Windows: bottom-right notification area; macOS: menu bar). The
+/// app is find-and-controllable here even with every window hidden.
+fn setup_tray(app: &AppHandle) -> tauri::Result<()> {
+    use tauri::menu::{Menu, MenuItem};
+    use tauri::tray::TrayIconBuilder;
+
+    let open = MenuItem::with_id(app, "open", "Open Unmute", true, None::<&str>)?;
+    let overlay = MenuItem::with_id(app, "overlay", "Show / hide overlay", true, None::<&str>)?;
+    let quit = MenuItem::with_id(app, "quit", "Quit Unmute", true, None::<&str>)?;
+    let menu = Menu::with_items(app, &[&open, &overlay, &quit])?;
+
+    let mut tray = TrayIconBuilder::with_id("unmute")
+        .tooltip("Unmute — Discord live captions")
+        .menu(&menu)
+        .show_menu_on_left_click(true)
+        .on_menu_event(|app, event| match event.id.as_ref() {
+            "open" => {
+                if let Some(w) = app.get_webview_window("main") {
+                    let _ = w.show();
+                    let _ = w.unminimize();
+                    let _ = w.set_focus();
+                }
+            }
+            "overlay" => toggle_overlay(app),
+            "quit" => app.exit(0),
+            _ => {}
+        });
+    if let Some(icon) = app.default_window_icon() {
+        tray = tray.icon(icon.clone());
+    }
+    tray.build(app)?;
+    Ok(())
+}
+
 fn setup_overlay_window(app: &AppHandle, settings: &settings::SettingsHandle) {
     let Some(overlay) = app.get_webview_window("overlay") else {
         return;
@@ -359,9 +430,10 @@ fn setup_overlay_window(app: &AppHandle, settings: &settings::SettingsHandle) {
     apply_overlay_size(app, &settings.overlay_layout());
     if let Some((x, y)) = settings.overlay_pos() {
         let _ = overlay.set_position(tauri::LogicalPosition::new(x, y));
-        return;
-    }
-    if let Ok(Some(monitor)) = overlay.primary_monitor() {
+        // A position saved on another monitor/resolution must not strand the
+        // overlay outside the visible screen.
+        clamp_overlay_into_screen(&overlay);
+    } else if let Ok(Some(monitor)) = overlay.primary_monitor() {
         let scale = monitor.scale_factor();
         let screen_w = monitor.size().width as f64 / scale;
         let screen_h = monitor.size().height as f64 / scale;
@@ -370,6 +442,22 @@ fn setup_overlay_window(app: &AppHandle, settings: &settings::SettingsHandle) {
             (screen_w - w) / 2.0,
             screen_h - h - 60.0,
         ));
+    }
+    // Some games/apps steal the topmost slot on Windows and the overlay quietly
+    // drops behind the game ("the overlay vanished"). Re-assert every few
+    // seconds while visible — a no-op when nothing changed. (Exclusive
+    // fullscreen bypasses the compositor entirely; docs recommend borderless.)
+    #[cfg(windows)]
+    {
+        let overlay2 = overlay.clone();
+        tauri::async_runtime::spawn(async move {
+            loop {
+                tokio::time::sleep(std::time::Duration::from_secs(3)).await;
+                if overlay2.is_visible().unwrap_or(false) {
+                    let _ = overlay2.set_always_on_top(true);
+                }
+            }
+        });
     }
 }
 
