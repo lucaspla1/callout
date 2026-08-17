@@ -223,7 +223,17 @@ pub fn spawn_worker(
                         } else {
                             &pcm
                         };
+                        let p_t0 = std::time::Instant::now();
                         if let Some(text) = decode(&mut state, pcm, utt_lang.as_deref(), threads) {
+                            let p_ms = p_t0.elapsed().as_millis();
+                            // A partial slower than its cadence means decode is
+                            // behind realtime — the #1 field question on CPU.
+                            if p_ms > 900 {
+                                crate::diag::log(&format!(
+                                    "slow partial: {p_ms}ms for {}ms audio",
+                                    pcm.len() as u64 * 1000 / TARGET_RATE as u64
+                                ));
+                            }
                             let stats = collect_stats(&state);
                             if !text.is_empty()
                                 && !is_known_hallucination(&text)
@@ -265,12 +275,12 @@ pub fn spawn_worker(
                             // previous final, a known noise hallucination, or a
                             // low-confidence decode (probability gates).
                             let stats = collect_stats(fin_state);
-                            eprintln!(
-                                "[stt] final decode: {:?} ({}, {:.1}s audio)",
-                                decode_t0.elapsed(),
+                            crate::diag::log(&format!(
+                                "final decode: {}ms ({}, {:.1}s audio)",
+                                decode_t0.elapsed().as_millis(),
                                 if beam { "turbo" } else { "small" },
                                 pcm.len() as f32 / TARGET_RATE as f32
-                            );
+                            ));
                             if is_low_confidence(&stats) {
                                 eprintln!(
                                     "[stt] gated final (mean_p={:.2} no_speech={:.2} logprob={:.2}): {text:?}",

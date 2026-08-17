@@ -102,16 +102,35 @@ fn run_session(
 
     let mut queue: VecDeque<u8> = VecDeque::new();
     let mut mono: Vec<f32> = Vec::with_capacity(4096);
+    let mut zeros: Vec<f32> = Vec::new();
     let mut last_pid_check = Instant::now();
+
+    // Wall-clock accounting: process loopback goes quiet whenever Discord
+    // renders nothing, but the VAD needs silence *chunks* to endpoint an
+    // utterance — without them, speech only finalizes at the max-utterance cap,
+    // chopped mid-word. Backfill droughts with zeros to keep the clock ticking.
+    let session_t0 = Instant::now();
+    let mut fed_frames: u64 = 0; // native frames handed to the conditioner
+    const GAP_FILL_THRESHOLD: u64 = NATIVE_RATE as u64 * 150 / 1000; // 150 ms
+    const GAP_FILL_MAX: u64 = NATIVE_RATE as u64; // ≤1 s per iteration
+
+    // Capture health, reported every 5 s via diag.
+    let (mut st_packets, mut st_frames, mut st_fills, mut st_fill_ms) = (0u64, 0u64, 0u64, 0u64);
+    let mut st_last = Instant::now();
+
     loop {
         // Silence = no packets and no events; a timeout here means idle, not failure.
         let _ = h_event.wait_for_event(500);
-        if let Ok(Some(frames)) = capture.get_next_packet_size() {
-            if frames > 0 {
-                capture
-                    .read_from_device_to_deque(&mut queue)
-                    .map_err(|e| format!("read: {e}"))?;
+        // Drain EVERYTHING available — one packet per wakeup falls behind
+        // realtime and the backlog becomes ever-growing caption delay.
+        while let Ok(Some(frames)) = capture.get_next_packet_size() {
+            if frames == 0 {
+                break;
             }
+            capture
+                .read_from_device_to_deque(&mut queue)
+                .map_err(|e| format!("read: {e}"))?;
+            st_packets += 1;
         }
         let whole_frames = queue.len() / blockalign;
         if whole_frames > 0 {
@@ -129,9 +148,33 @@ fn run_session(
                 let right = f32::from_le_bytes(b);
                 mono.push(0.5 * (left + right));
             }
+            fed_frames += mono.len() as u64;
+            st_frames += mono.len() as u64;
             for chunk in conditioner.feed(&mono) {
                 sink(chunk);
             }
+        }
+        // Backfill a packet drought with silence (after real data is drained,
+        // so zeros never splice into speech that merely arrived late).
+        let expected = session_t0.elapsed().as_millis() as u64 * (NATIVE_RATE as u64) / 1000;
+        if expected > fed_frames + GAP_FILL_THRESHOLD {
+            let missing = (expected - fed_frames).min(GAP_FILL_MAX) as usize;
+            zeros.clear();
+            zeros.resize(missing, 0.0);
+            fed_frames += missing as u64;
+            st_fills += 1;
+            st_fill_ms += missing as u64 * 1000 / NATIVE_RATE as u64;
+            for chunk in conditioner.feed(&zeros) {
+                sink(chunk);
+            }
+        }
+        if st_last.elapsed() >= Duration::from_secs(5) {
+            st_last = Instant::now();
+            crate::diag::log(&format!(
+                "capture 5s: packets={st_packets} frames={st_frames} fills={st_fills} fill_ms={st_fill_ms} backlog_frames={}",
+                queue.len() / blockalign
+            ));
+            (st_packets, st_frames, st_fills, st_fill_ms) = (0, 0, 0, 0);
         }
         if last_pid_check.elapsed() >= Duration::from_secs(2) {
             last_pid_check = Instant::now();

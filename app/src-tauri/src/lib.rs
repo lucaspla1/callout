@@ -1,5 +1,6 @@
 mod align;
 mod capture;
+mod diag;
 mod models;
 mod presence;
 mod rpc;
@@ -242,6 +243,8 @@ pub fn run() {
         ])
         .setup(|app| {
             let data_dir = app.path().app_data_dir().unwrap_or_default();
+            let _ = std::fs::create_dir_all(&data_dir);
+            diag::init(&data_dir);
             let settings = settings::SettingsHandle::load(data_dir);
             app.manage(settings.clone());
             setup_overlay_window(app.handle(), &settings);

@@ -140,6 +140,12 @@ impl Gate {
                 if endpoint {
                     let speech_ms = utt_ms.saturating_sub(*silence_ms as u64);
                     if speech_ms >= self.cfg.min_speech_ms as u64 {
+                        // "cap" endings chop speech mid-word — in the field log
+                        // they are the smoking gun for a stalled silence clock.
+                        crate::diag::log(&format!(
+                            "utterance: {utt_ms}ms ended_by={}",
+                            if *silence_ms >= self.cfg.endpoint_silence_ms { "endpoint" } else { "cap" }
+                        ));
                         let pcm = std::mem::take(&mut self.utterance);
                         let t_end_ms = self.utt_start_ms + utt_ms;
                         // Finals are never dropped; blocking send is fine off the RT thread.
