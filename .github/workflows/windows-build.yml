@@ -41,7 +41,9 @@ jobs:
           CC: clang-cl
           CXX: clang-cl
           CFLAGS: /arch:AVX2
-          CXXFLAGS: /arch:AVX2
+          # /EHsc: clang-cl disables C++ exceptions by default; ggml's gguf.cpp
+          # uses try/catch.
+          CXXFLAGS: /arch:AVX2 /EHsc
         run: cd app && npx tauri build --bundles nsis
       - name: Prove whisper was built by clang
         shell: bash
@@ -58,7 +60,7 @@ jobs:
           CC: clang-cl
           CXX: clang-cl
           CFLAGS: /arch:AVX2
-          CXXFLAGS: /arch:AVX2
+          CXXFLAGS: /arch:AVX2 /EHsc
         run: |
           curl -sL -o "$RUNNER_TEMP/ggml-small-q5_1.bin" https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-small-q5_1.bin
           cd app/src-tauri
