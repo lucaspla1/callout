@@ -71,11 +71,17 @@ impl SettingsHandle {
             .ok()
             .and_then(|s| serde_json::from_str(&s).ok())
             .unwrap_or_default();
-        Self { path, inner: Arc::new(RwLock::new(settings)) }
+        Self {
+            path,
+            inner: Arc::new(RwLock::new(settings)),
+        }
     }
 
     pub fn languages(&self) -> Vec<String> {
-        self.inner.read().map(|s| s.languages.clone()).unwrap_or_default()
+        self.inner
+            .read()
+            .map(|s| s.languages.clone())
+            .unwrap_or_default()
     }
 
     pub fn set_languages(&self, languages: Vec<String>) {
@@ -99,7 +105,10 @@ impl SettingsHandle {
     }
 
     pub fn caption_identity(&self) -> String {
-        self.inner.read().map(|s| s.caption_identity.clone()).unwrap_or_else(|_| "name".into())
+        self.inner
+            .read()
+            .map(|s| s.caption_identity.clone())
+            .unwrap_or_else(|_| "name".into())
     }
 
     pub fn set_caption_identity(&self, mode: String) {
@@ -113,12 +122,24 @@ impl SettingsHandle {
     pub fn overlay_layout(&self) -> String {
         // Normalize on read so stale values (e.g. the retired "roster") fall
         // back to the default instead of leaking to the frontend.
-        let stored = self.inner.read().map(|s| s.overlay_layout.clone()).unwrap_or_default();
-        if stored == "feed" { stored } else { "captions".into() }
+        let stored = self
+            .inner
+            .read()
+            .map(|s| s.overlay_layout.clone())
+            .unwrap_or_default();
+        if stored == "feed" {
+            stored
+        } else {
+            "captions".into()
+        }
     }
 
     pub fn set_overlay_layout(&self, layout: String) {
-        let layout = if layout == "feed" { layout } else { "captions".to_string() };
+        let layout = if layout == "feed" {
+            layout
+        } else {
+            "captions".to_string()
+        };
         self.mutate(|s| s.overlay_layout = layout);
     }
 

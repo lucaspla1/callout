@@ -23,56 +23,83 @@ pub enum PresenceEvent {
     /// The local user's Discord id (from the RPC READY handshake). The local
     /// user's own voice never appears in the captured audio (Discord doesn't
     /// play your mic back), so attribution must exclude them.
-    SelfIdentified { user_id: String },
-    ChannelJoined { channel_name: String, members: Vec<Member> },
+    SelfIdentified {
+        user_id: String,
+    },
+    ChannelJoined {
+        channel_name: String,
+        members: Vec<Member>,
+    },
     ChannelLeft,
-    MemberJoined { member: Member },
-    MemberUpdated { member: Member },
-    MemberLeft { user_id: String },
-    SpeakingStart { user_id: String, at_ms: u64 },
-    SpeakingStop { user_id: String, at_ms: u64 },
+    MemberJoined {
+        member: Member,
+    },
+    MemberUpdated {
+        member: Member,
+    },
+    MemberLeft {
+        user_id: String,
+    },
+    SpeakingStart {
+        user_id: String,
+        at_ms: u64,
+    },
+    SpeakingStop {
+        user_id: String,
+        at_ms: u64,
+    },
 }
 
-/// A source of presence events. `subscribe` may be called any number of times.
-pub trait PresenceSource: Send + Sync {
-    fn subscribe(&self) -> broadcast::Receiver<PresenceEvent>;
-}
-
-/// Fake presence feed for development: 3 members, speakers rotate every few seconds.
-pub struct MockPresence {
-    tx: broadcast::Sender<PresenceEvent>,
-}
-
-impl MockPresence {
-    pub fn start(now_ms: impl Fn() -> u64 + Send + 'static) -> Self {
-        let (tx, _) = broadcast::channel(64);
-        let tx2 = tx.clone();
-        tauri::async_runtime::spawn(async move {
-            let members = vec![
-                Member { id: "1".into(), display_name: "Marina".into(), color: "#FEE75C".into(), avatar_url: None, muted: false },
-                Member { id: "2".into(), display_name: "Lucas".into(), color: "#57F287".into(), avatar_url: None, muted: false },
-                Member { id: "3".into(), display_name: "Rafa".into(), color: "#EB459E".into(), avatar_url: None, muted: true },
-            ];
-            let _ = tx2.send(PresenceEvent::ChannelJoined {
-                channel_name: "Duo Q".into(),
-                members: members.clone(),
-            });
-            let mut i = 0usize;
-            loop {
-                let speaker = &members[i % 2]; // Rafa is muted, never speaks
-                let _ = tx2.send(PresenceEvent::SpeakingStart { user_id: speaker.id.clone(), at_ms: now_ms() });
-                tokio::time::sleep(std::time::Duration::from_millis(2600)).await;
-                let _ = tx2.send(PresenceEvent::SpeakingStop { user_id: speaker.id.clone(), at_ms: now_ms() });
-                tokio::time::sleep(std::time::Duration::from_millis(900)).await;
-                i += 1;
-            }
+/// Fake presence feed for development: 3 members, speakers rotate every few
+/// seconds. Sends into the caller's channel — the caller subscribes BEFORE
+/// calling, otherwise the initial ChannelJoined can race the subscription and
+/// vanish (a broadcast send with zero receivers is dropped; CI caught this).
+pub fn start_mock_presence(
+    tx2: broadcast::Sender<PresenceEvent>,
+    now_ms: impl Fn() -> u64 + Send + 'static,
+) {
+    tauri::async_runtime::spawn(async move {
+        let members = vec![
+            Member {
+                id: "1".into(),
+                display_name: "Marina".into(),
+                color: "#FEE75C".into(),
+                avatar_url: None,
+                muted: false,
+            },
+            Member {
+                id: "2".into(),
+                display_name: "Lucas".into(),
+                color: "#57F287".into(),
+                avatar_url: None,
+                muted: false,
+            },
+            Member {
+                id: "3".into(),
+                display_name: "Rafa".into(),
+                color: "#EB459E".into(),
+                avatar_url: None,
+                muted: true,
+            },
+        ];
+        let _ = tx2.send(PresenceEvent::ChannelJoined {
+            channel_name: "Duo Q".into(),
+            members: members.clone(),
         });
-        Self { tx }
-    }
-}
-
-impl PresenceSource for MockPresence {
-    fn subscribe(&self) -> broadcast::Receiver<PresenceEvent> {
-        self.tx.subscribe()
-    }
+        let mut i = 0usize;
+        loop {
+            let speaker = &members[i % 2]; // Rafa is muted, never speaks
+            let _ = tx2.send(PresenceEvent::SpeakingStart {
+                user_id: speaker.id.clone(),
+                at_ms: now_ms(),
+            });
+            tokio::time::sleep(std::time::Duration::from_millis(2600)).await;
+            let _ = tx2.send(PresenceEvent::SpeakingStop {
+                user_id: speaker.id.clone(),
+                at_ms: now_ms(),
+            });
+            tokio::time::sleep(std::time::Duration::from_millis(900)).await;
+            i += 1;
+        }
+    });
 }

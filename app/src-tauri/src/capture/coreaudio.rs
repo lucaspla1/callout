@@ -30,7 +30,9 @@ extern "C" fn io_proc(
     _output_time: &cat::AudioTimeStamp,
     ctx: Option<&mut IoCtx>,
 ) -> os::Status {
-    let Some(ctx) = ctx else { return Default::default() };
+    let Some(ctx) = ctx else {
+        return Default::default();
+    };
     let nb = (input_data.number_buffers as usize).min(2);
     ctx.scratch.clear();
     if nb == 0 {
@@ -94,7 +96,9 @@ fn stable_clock_uid() -> Result<(cidre::arc::R<cf::String>, String), String> {
 }
 
 fn discord_process_ids(bundle_prefix: &str, verbose: bool) -> Vec<u32> {
-    let Ok(procs) = ca::System::processes() else { return Vec::new() };
+    let Ok(procs) = ca::System::processes() else {
+        return Vec::new();
+    };
     let mut ids: Vec<u32> = procs
         .iter()
         .filter(|p| {
@@ -187,7 +191,11 @@ fn run_session(
     let agg = ca::AggregateDevice::with_desc(&desc).map_err(|e| format!("aggregate: {e:?}"))?;
 
     let (raw_tx, raw_rx) = crossbeam_channel::bounded::<Vec<f32>>(64);
-    let mut ctx = Box::new(IoCtx { tx: raw_tx, channels, scratch: Vec::with_capacity(4096) });
+    let mut ctx = Box::new(IoCtx {
+        tx: raw_tx,
+        channels,
+        scratch: Vec::with_capacity(4096),
+    });
     let proc_id = agg
         .create_io_proc_id(io_proc, Some(&mut *ctx))
         .map_err(|e| format!("io proc: {e:?}"))?;
@@ -206,8 +214,10 @@ fn run_session(
             // Log only on silence↔audio transitions to keep the log readable.
             let has_audio = peak > 0.001;
             if has_audio != had_audio {
-                eprintln!("[capture] audio {}: blocks={blocks} samples={samples} peak={peak:.4}",
-                    if has_audio { "FLOWING" } else { "went silent" });
+                eprintln!(
+                    "[capture] audio {}: blocks={blocks} samples={samples} peak={peak:.4}",
+                    if has_audio { "FLOWING" } else { "went silent" }
+                );
                 had_audio = has_audio;
             }
             stats_at = std::time::Instant::now();

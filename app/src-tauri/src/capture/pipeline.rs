@@ -64,11 +64,13 @@ impl Conditioner {
     fn drain_resampler(&mut self) {
         use rubato::audioadapter_buffers::direct::InterleavedSlice;
         use rubato::audioadapter_buffers::owned::InterleavedOwned;
-        let Some(rs) = &mut self.resampler else { return };
+        let Some(rs) = &mut self.resampler else {
+            return;
+        };
         while self.in_buf.len() >= rs.input_frames_next() {
             let need = rs.input_frames_next();
-            let input = InterleavedSlice::new(&self.in_buf[..need], 1, need)
-                .expect("input adapter");
+            let input =
+                InterleavedSlice::new(&self.in_buf[..need], 1, need).expect("input adapter");
             let out_frames = rs.output_frames_next();
             let mut output = InterleavedOwned::<f32>::new(0.0, 1, out_frames);
             match rs.process_into_buffer(&input, &mut output, None) {
@@ -101,7 +103,10 @@ impl Conditioner {
             }
             let t_start_ms = self.anchor_ms + self.emitted * 1000 / TARGET_RATE as u64;
             self.emitted += CHUNK_SAMPLES as u64;
-            out.push(PcmChunk { samples, t_start_ms });
+            out.push(PcmChunk {
+                samples,
+                t_start_ms,
+            });
         }
         out
     }
@@ -148,7 +153,11 @@ mod tests {
             .collect();
         let mut total = 0usize;
         for block in sine.chunks(1024) {
-            total += c.feed(block).iter().map(|ch| ch.samples.len()).sum::<usize>();
+            total += c
+                .feed(block)
+                .iter()
+                .map(|ch| ch.samples.len())
+                .sum::<usize>();
         }
         // ~16k samples out (resampler delay swallows a tail); generous bounds.
         assert!(total > 14_000 && total <= 16_320, "got {total}");

@@ -22,7 +22,11 @@ pub struct Frame {
     pub json: Value,
 }
 
-pub async fn write_frame<W: AsyncWrite + Unpin>(w: &mut W, op: u32, json: &Value) -> io::Result<()> {
+pub async fn write_frame<W: AsyncWrite + Unpin>(
+    w: &mut W,
+    op: u32,
+    json: &Value,
+) -> io::Result<()> {
     let body = serde_json::to_vec(json)?;
     let mut buf = Vec::with_capacity(8 + body.len());
     buf.extend_from_slice(&op.to_le_bytes());
@@ -37,12 +41,15 @@ pub async fn read_frame<R: AsyncRead + Unpin>(r: &mut R) -> io::Result<Frame> {
     let op = u32::from_le_bytes(hdr[0..4].try_into().unwrap());
     let len = u32::from_le_bytes(hdr[4..8].try_into().unwrap()) as usize;
     if len > MAX_FRAME {
-        return Err(io::Error::new(io::ErrorKind::InvalidData, "frame too large"));
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "frame too large",
+        ));
     }
     let mut body = vec![0u8; len];
     r.read_exact(&mut body).await?;
-    let json = serde_json::from_slice(&body)
-        .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
+    let json =
+        serde_json::from_slice(&body).map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
     Ok(Frame { op, json })
 }
 
@@ -75,7 +82,9 @@ mod tests {
     #[tokio::test]
     async fn handshake_bytes_are_le() {
         let (mut a, mut b) = tokio::io::duplex(1024);
-        write_frame(&mut a, op::HANDSHAKE, &json!({"v": 1})).await.unwrap();
+        write_frame(&mut a, op::HANDSHAKE, &json!({"v": 1}))
+            .await
+            .unwrap();
         let mut raw = [0u8; 8];
         b.read_exact(&mut raw).await.unwrap();
         assert_eq!(u32::from_le_bytes(raw[0..4].try_into().unwrap()), 0);

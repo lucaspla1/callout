@@ -25,8 +25,7 @@ fn find_discord_root() -> Option<u32> {
     let system = System::new_with_specifics(
         RefreshKind::nothing().with_processes(ProcessRefreshKind::nothing()),
     );
-    let is_discord =
-        |name: &OsStr| DISCORD_EXES.iter().any(|n| name == OsStr::new(n));
+    let is_discord = |name: &OsStr| DISCORD_EXES.iter().any(|n| name == OsStr::new(n));
     system
         .processes()
         .values()
@@ -89,15 +88,24 @@ fn run_session(
 
     let mut client = AudioClient::new_application_loopback_client(pid, true)
         .map_err(|e| format!("loopback client (pid {pid}): {e}"))?;
-    let mode = StreamMode::EventsShared { autoconvert: true, buffer_duration_hns: 0 };
+    let mode = StreamMode::EventsShared {
+        autoconvert: true,
+        buffer_duration_hns: 0,
+    };
     client
         .initialize_client(&format, &Direction::Capture, &mode)
         .map_err(|e| format!("initialize: {e}"))?;
-    let h_event = client.set_get_eventhandle().map_err(|e| format!("event handle: {e}"))?;
-    let capture = client.get_audiocaptureclient().map_err(|e| format!("capture client: {e}"))?;
+    let h_event = client
+        .set_get_eventhandle()
+        .map_err(|e| format!("event handle: {e}"))?;
+    let capture = client
+        .get_audiocaptureclient()
+        .map_err(|e| format!("capture client: {e}"))?;
     client.start_stream().map_err(|e| format!("start: {e}"))?;
 
-    let _ = status_tx.send(CaptionsStatus::Capturing { native_rate: NATIVE_RATE });
+    let _ = status_tx.send(CaptionsStatus::Capturing {
+        native_rate: NATIVE_RATE,
+    });
     let mut conditioner = Conditioner::new(NATIVE_RATE, now_ms.clone())?;
 
     let mut queue: VecDeque<u8> = VecDeque::new();

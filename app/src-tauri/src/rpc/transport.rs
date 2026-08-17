@@ -26,7 +26,9 @@ async fn try_connect(path: &str) -> Option<Conn> {
 #[cfg(windows)]
 async fn try_connect(path: &str) -> Option<Conn> {
     // TODO(M4): handle ERROR_PIPE_BUSY with a short retry.
-    tokio::net::windows::named_pipe::ClientOptions::new().open(path).ok()
+    tokio::net::windows::named_pipe::ClientOptions::new()
+        .open(path)
+        .ok()
 }
 
 #[cfg(windows)]

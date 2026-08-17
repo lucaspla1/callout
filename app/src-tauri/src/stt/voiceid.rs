@@ -138,7 +138,9 @@ impl VoiceStore {
     /// Owner-only file, written atomically. The embeddings identify people, so
     /// the store must not be readable by other local accounts.
     fn save(&self) {
-        let Ok(json) = serde_json::to_string(&self.prints) else { return };
+        let Ok(json) = serde_json::to_string(&self.prints) else {
+            return;
+        };
         let tmp = self.path.with_extension("tmp");
         #[cfg(unix)]
         let written = {
@@ -207,7 +209,11 @@ mod model_tests {
 
     fn read_wav(path: &std::path::Path) -> Vec<f32> {
         let bytes = std::fs::read(path).expect("read wav");
-        let pos = bytes.windows(4).position(|w| w == b"data").expect("data chunk") + 8;
+        let pos = bytes
+            .windows(4)
+            .position(|w| w == b"data")
+            .expect("data chunk")
+            + 8;
         bytes[pos..]
             .chunks_exact(2)
             .map(|c| i16::from_le_bytes([c[0], c[1]]) as f32 / 32768.0)
@@ -242,9 +248,17 @@ mod model_tests {
         let cross2 = cosine(&pt1, &es1);
         let cross3 = cosine(&en2, &es1);
         eprintln!("[voice-ab] same-speaker: en={same_en:.3} pt={same_pt:.3}");
-        eprintln!("[voice-ab] cross-speaker: en/pt={cross1:.3} pt/es={cross2:.3} en/es={cross3:.3}");
-        assert!(same_en > cross1 + 0.15, "en1/en2 vs en1/pt1: {same_en:.3} vs {cross1:.3}");
-        assert!(same_pt > cross2 + 0.15, "pt1/pt2 vs pt1/es1: {same_pt:.3} vs {cross2:.3}");
+        eprintln!(
+            "[voice-ab] cross-speaker: en/pt={cross1:.3} pt/es={cross2:.3} en/es={cross3:.3}"
+        );
+        assert!(
+            same_en > cross1 + 0.15,
+            "en1/en2 vs en1/pt1: {same_en:.3} vs {cross1:.3}"
+        );
+        assert!(
+            same_pt > cross2 + 0.15,
+            "pt1/pt2 vs pt1/es1: {same_pt:.3} vs {cross2:.3}"
+        );
         assert!(
             same_en >= MATCH_THRESHOLD && same_pt >= MATCH_THRESHOLD,
             "same-speaker similarity below MATCH_THRESHOLD ({MATCH_THRESHOLD})"
@@ -305,11 +319,20 @@ mod tests {
             Some("a".to_string())
         );
         // Below threshold.
-        assert_eq!(pick_by_similarity(vec![("a".into(), 0.3), ("b".into(), 0.1)]), None);
+        assert_eq!(
+            pick_by_similarity(vec![("a".into(), 0.3), ("b".into(), 0.1)]),
+            None
+        );
         // Margin too small — stay ambiguous.
-        assert_eq!(pick_by_similarity(vec![("a".into(), 0.5), ("b".into(), 0.47)]), None);
+        assert_eq!(
+            pick_by_similarity(vec![("a".into(), 0.5), ("b".into(), 0.47)]),
+            None
+        );
         // Single candidate above threshold wins.
-        assert_eq!(pick_by_similarity(vec![("a".into(), 0.45)]), Some("a".to_string()));
+        assert_eq!(
+            pick_by_similarity(vec![("a".into(), 0.45)]),
+            Some("a".to_string())
+        );
         assert_eq!(pick_by_similarity(vec![]), None);
     }
 }

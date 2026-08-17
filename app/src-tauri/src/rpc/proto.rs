@@ -72,10 +72,18 @@ impl VoiceStateEntry {
         match &self.user.avatar {
             Some(hash) if !hash.is_empty() => {
                 let ext = if hash.starts_with("a_") { "gif" } else { "png" };
-                format!("https://{cdn_host}/avatars/{}/{hash}.{ext}?size=64", self.user.id)
+                format!(
+                    "https://{cdn_host}/avatars/{}/{hash}.{ext}?size=64",
+                    self.user.id
+                )
             }
             _ => {
-                let idx = self.user.id.parse::<u64>().map(|v| (v >> 22) % 6).unwrap_or(0);
+                let idx = self
+                    .user
+                    .id
+                    .parse::<u64>()
+                    .map(|v| (v >> 22) % 6)
+                    .unwrap_or(0);
                 format!("https://{cdn_host}/embed/avatars/{idx}.png")
             }
         }
@@ -120,7 +128,9 @@ mod tests {
         let entry = &ch.voice_states[0];
         assert_eq!(entry.display_name(), "cool nickname");
         assert!(entry.voice_state.self_mute);
-        assert!(entry.avatar_url("cdn.discordapp.com").contains("/avatars/190320984123768832/"));
+        assert!(entry
+            .avatar_url("cdn.discordapp.com")
+            .contains("/avatars/190320984123768832/"));
     }
 
     #[test]
@@ -140,7 +150,9 @@ mod tests {
     fn default_avatar_when_hash_missing() {
         let mut e = VoiceStateEntry::default();
         e.user.id = "190320984123768832".into();
-        assert!(e.avatar_url("cdn.discordapp.com").contains("/embed/avatars/"));
+        assert!(e
+            .avatar_url("cdn.discordapp.com")
+            .contains("/embed/avatars/"));
     }
 
     #[test]

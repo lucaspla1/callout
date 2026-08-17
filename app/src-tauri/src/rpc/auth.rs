@@ -37,7 +37,12 @@ pub async fn ensure_token<S: AsyncRead + AsyncWrite + Unpin>(
         if tokens.expires_at <= now_epoch() + 60 {
             match &tokens.refresh_token {
                 Some(refresh) => {
-                    match exchange(&cfg.client_id, &[("grant_type", "refresh_token"), ("refresh_token", refresh)]).await {
+                    match exchange(
+                        &cfg.client_id,
+                        &[("grant_type", "refresh_token"), ("refresh_token", refresh)],
+                    )
+                    .await
+                    {
                         Ok(fresh) => {
                             save_cached(&fresh);
                             tokens = fresh;
@@ -86,7 +91,9 @@ pub async fn ensure_token<S: AsyncRead + AsyncWrite + Unpin>(
         )
         .await
         .map_err(|e| {
-            sess.emit_status(RpcStatus::AuthError { message: e.to_string() });
+            sess.emit_status(RpcStatus::AuthError {
+                message: e.to_string(),
+            });
             e
         })?;
     let code = authorize
@@ -104,7 +111,9 @@ pub async fn ensure_token<S: AsyncRead + AsyncWrite + Unpin>(
     )
     .await
     .map_err(|e| {
-        sess.emit_status(RpcStatus::AuthError { message: e.to_string() });
+        sess.emit_status(RpcStatus::AuthError {
+            message: e.to_string(),
+        });
         e
     })?;
     save_cached(&tokens);
@@ -141,7 +150,9 @@ async fn exchange(client_id: &str, params: &[(&str, &str)]) -> Result<CachedToke
         .await
         .map_err(|e| CallError::Protocol(format!("token endpoint bad body: {e}")))?;
     if !status.is_success() {
-        return Err(CallError::Protocol(format!("token exchange failed ({status}): {body}")));
+        return Err(CallError::Protocol(format!(
+            "token exchange failed ({status}): {body}"
+        )));
     }
     let access_token = body
         .get("access_token")
@@ -150,13 +161,23 @@ async fn exchange(client_id: &str, params: &[(&str, &str)]) -> Result<CachedToke
         .to_string();
     Ok(CachedTokens {
         access_token,
-        refresh_token: body.get("refresh_token").and_then(|v| v.as_str()).map(String::from),
-        expires_at: now_epoch() + body.get("expires_in").and_then(|v| v.as_u64()).unwrap_or(3600),
+        refresh_token: body
+            .get("refresh_token")
+            .and_then(|v| v.as_str())
+            .map(String::from),
+        expires_at: now_epoch()
+            + body
+                .get("expires_in")
+                .and_then(|v| v.as_u64())
+                .unwrap_or(3600),
     })
 }
 
 fn now_epoch() -> u64 {
-    SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0)
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0)
 }
 
 // Token cache is a plain file for ALL builds until the app ships with a real
@@ -181,7 +202,10 @@ mod store {
         #[cfg(not(windows))]
         {
             let home = std::env::var("HOME").ok()?;
-            Some(std::path::PathBuf::from(home).join("Library/Application Support/app.callout.desktop"))
+            Some(
+                std::path::PathBuf::from(home)
+                    .join("Library/Application Support/app.callout.desktop"),
+            )
         }
     }
 
@@ -195,13 +219,19 @@ mod store {
 
     pub fn load() -> Option<CachedTokens> {
         let read = |p: std::path::PathBuf| {
-            std::fs::read_to_string(p).ok().and_then(|s| serde_json::from_str(&s).ok())
+            std::fs::read_to_string(p)
+                .ok()
+                .and_then(|s| serde_json::from_str(&s).ok())
         };
-        path().and_then(read).or_else(|| legacy_path().and_then(read))
+        path()
+            .and_then(read)
+            .or_else(|| legacy_path().and_then(read))
     }
 
     pub fn save(tokens: &CachedTokens) {
-        let (Some(p), Ok(json)) = (path(), serde_json::to_string(tokens)) else { return };
+        let (Some(p), Ok(json)) = (path(), serde_json::to_string(tokens)) else {
+            return;
+        };
         if let Some(dir) = p.parent() {
             let _ = std::fs::create_dir_all(dir);
         }
@@ -222,7 +252,10 @@ mod keychain_store {
 
     pub fn load() -> Option<CachedTokens> {
         let entry = keyring::Entry::new(KEYRING_SERVICE, KEYRING_ACCOUNT).ok()?;
-        entry.get_password().ok().and_then(|s| serde_json::from_str(&s).ok())
+        entry
+            .get_password()
+            .ok()
+            .and_then(|s| serde_json::from_str(&s).ok())
     }
 
     pub fn save(tokens: &CachedTokens) {

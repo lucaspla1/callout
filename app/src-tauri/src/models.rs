@@ -57,7 +57,9 @@ fn active() -> impl Iterator<Item = &'static ModelSpec> {
 }
 
 pub fn missing(data_dir: &Path) -> Vec<&'static ModelSpec> {
-    active().filter(|m| !data_dir.join(m.rel_path).is_file()).collect()
+    active()
+        .filter(|m| !data_dir.join(m.rel_path).is_file())
+        .collect()
 }
 
 /// Download every missing model, emitting progress. Returns Err after retries
@@ -71,11 +73,18 @@ pub async fn ensure_all(
         if dest.is_file() {
             continue;
         }
-        download_with_retries(spec, &dest, &emit).await.map_err(|e| {
-            emit(ModelDl::Failed { id: spec.id.to_string(), message: e.clone() });
-            e
-        })?;
-        emit(ModelDl::Done { id: spec.id.to_string() });
+        download_with_retries(spec, &dest, &emit)
+            .await
+            .map_err(|e| {
+                emit(ModelDl::Failed {
+                    id: spec.id.to_string(),
+                    message: e.clone(),
+                });
+                e
+            })?;
+        emit(ModelDl::Done {
+            id: spec.id.to_string(),
+        });
     }
     emit(ModelDl::AllReady);
     Ok(())
@@ -106,7 +115,10 @@ async fn download_with_retries(
             }
         }
     }
-    Err(format!("{} download failed after retries: {last_err}", spec.id))
+    Err(format!(
+        "{} download failed after retries: {last_err}",
+        spec.id
+    ))
 }
 
 async fn stream_to_partial(
@@ -129,7 +141,10 @@ async fn stream_to_partial(
     if !resuming {
         got = 0;
     }
-    let total = got + resp.content_length().unwrap_or(spec.approx_bytes.saturating_sub(got));
+    let total = got
+        + resp
+            .content_length()
+            .unwrap_or(spec.approx_bytes.saturating_sub(got));
     let mut file = std::fs::OpenOptions::new()
         .create(true)
         .append(resuming)
@@ -139,16 +154,28 @@ async fn stream_to_partial(
         .map_err(|e| format!("open partial: {e}"))?;
 
     let mut last_emit = Instant::now();
-    emit(ModelDl::Progress { id: spec.id.to_string(), got, total });
+    emit(ModelDl::Progress {
+        id: spec.id.to_string(),
+        got,
+        total,
+    });
     while let Some(chunk) = resp.chunk().await.map_err(|e| format!("stream: {e}"))? {
         file.write_all(&chunk).map_err(|e| format!("write: {e}"))?;
         got += chunk.len() as u64;
         if last_emit.elapsed() >= Duration::from_millis(200) {
-            emit(ModelDl::Progress { id: spec.id.to_string(), got, total });
+            emit(ModelDl::Progress {
+                id: spec.id.to_string(),
+                got,
+                total,
+            });
             last_emit = Instant::now();
         }
     }
-    emit(ModelDl::Progress { id: spec.id.to_string(), got, total: got.max(total) });
+    emit(ModelDl::Progress {
+        id: spec.id.to_string(),
+        got,
+        total: got.max(total),
+    });
     file.flush().map_err(|e| format!("flush: {e}"))?;
     Ok(())
 }

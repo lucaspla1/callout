@@ -59,10 +59,14 @@ fn collect_stats(state: &whisper_rs::WhisperState) -> DecodeStats {
     let (mut sum_p, mut sum_plog, mut n) = (0.0f32, 0.0f32, 0u32);
     let mut no_speech = 0.0f32;
     for s in 0..state.full_n_segments() {
-        let Some(seg) = state.get_segment(s) else { continue };
+        let Some(seg) = state.get_segment(s) else {
+            continue;
+        };
         no_speech = no_speech.max(seg.no_speech_probability());
         for t in 0..seg.n_tokens() {
-            let Some(token) = seg.get_token(t) else { continue };
+            let Some(token) = seg.get_token(t) else {
+                continue;
+            };
             if let Ok(piece) = token.to_str_lossy() {
                 if piece.starts_with("[_") || piece.starts_with("<|") {
                     continue;
@@ -75,7 +79,11 @@ fn collect_stats(state: &whisper_rs::WhisperState) -> DecodeStats {
         }
     }
     let n = n.max(1) as f32;
-    DecodeStats { mean_p: sum_p / n, avg_logprob: sum_plog / n, no_speech_prob: no_speech }
+    DecodeStats {
+        mean_p: sum_p / n,
+        avg_logprob: sum_plog / n,
+        no_speech_prob: no_speech,
+    }
 }
 
 /// The gates every serious chunked-whisper deployment ships (OpenAI defaults +
@@ -382,7 +390,12 @@ fn collapse_repeats(text: &str) -> String {
         }
         let dup = out
             .last()
-            .map(|l| l.trim().trim_end_matches(['.', '!', '?']).trim().eq_ignore_ascii_case(t))
+            .map(|l| {
+                l.trim()
+                    .trim_end_matches(['.', '!', '?'])
+                    .trim()
+                    .eq_ignore_ascii_case(t)
+            })
             .unwrap_or(false);
         if !dup {
             out.push(part);
@@ -391,7 +404,10 @@ fn collapse_repeats(text: &str) -> String {
     if out.is_empty() {
         return text.trim().to_string();
     }
-    out.join(" ").split_whitespace().collect::<Vec<_>>().join(" ")
+    out.join(" ")
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
 }
 
 fn collect_text(state: &whisper_rs::WhisperState) -> String {
@@ -415,9 +431,19 @@ fn collect_text(state: &whisper_rs::WhisperState) -> String {
 /// (anarlog ships the same blocklist.)
 fn is_noise_final(text: &str) -> bool {
     matches!(
-        text.trim().to_lowercase().trim_end_matches(['.', '!']).trim(),
+        text.trim()
+            .to_lowercase()
+            .trim_end_matches(['.', '!'])
+            .trim(),
         // "música"/"music" are whisper's [music] tags leaking as words on beeps.
-        "you" | "thank you" | "♪" | "obrigado" | "obrigada" | "gracias" | "música" | "musica"
+        "you"
+            | "thank you"
+            | "♪"
+            | "obrigado"
+            | "obrigada"
+            | "gracias"
+            | "música"
+            | "musica"
             | "music"
     )
 }
@@ -427,10 +453,16 @@ fn is_noise_final(text: &str) -> bool {
 fn collect_words(state: &whisper_rs::WhisperState, base_ms: u64) -> Vec<Word> {
     let mut words: Vec<Word> = Vec::new();
     for s in 0..state.full_n_segments() {
-        let Some(seg) = state.get_segment(s) else { continue };
+        let Some(seg) = state.get_segment(s) else {
+            continue;
+        };
         for t in 0..seg.n_tokens() {
-            let Some(token) = seg.get_token(t) else { continue };
-            let Ok(piece) = token.to_str_lossy() else { continue };
+            let Some(token) = seg.get_token(t) else {
+                continue;
+            };
+            let Ok(piece) = token.to_str_lossy() else {
+                continue;
+            };
             // Skip special tokens ("[_BEG_]", "<|pt|>", …).
             if piece.starts_with("[_") || piece.starts_with("<|") {
                 continue;
@@ -444,7 +476,11 @@ fn collect_words(state: &whisper_rs::WhisperState, base_ms: u64) -> Vec<Word> {
             let t1_ms = base_ms + (t1 as u64) * 10;
             let starts_word = piece.starts_with(' ') || words.is_empty();
             if starts_word {
-                words.push(Word { text: piece.trim_start().to_string(), t0_ms, t1_ms });
+                words.push(Word {
+                    text: piece.trim_start().to_string(),
+                    t0_ms,
+                    t1_ms,
+                });
             } else if let Some(last) = words.last_mut() {
                 last.text.push_str(&piece);
                 last.t1_ms = last.t1_ms.max(t1_ms);
@@ -474,7 +510,10 @@ fn run_full(
 
     // Beam search on finals (quality); greedy on partials (speed).
     let strategy = if beam {
-        SamplingStrategy::BeamSearch { beam_size: 5, patience: 1.0 }
+        SamplingStrategy::BeamSearch {
+            beam_size: 5,
+            patience: 1.0,
+        }
     } else {
         SamplingStrategy::Greedy { best_of: 1 }
     };
@@ -565,7 +604,11 @@ mod ab_tests {
     fn read_wav_16k_mono(path: &std::path::Path) -> Vec<f32> {
         let bytes = std::fs::read(path).expect("read wav");
         // Find the "data" chunk (fixtures come from afconvert, LEI16@16000 mono).
-        let pos = bytes.windows(4).position(|w| w == b"data").expect("data chunk") + 8;
+        let pos = bytes
+            .windows(4)
+            .position(|w| w == b"data")
+            .expect("data chunk")
+            + 8;
         bytes[pos..]
             .chunks_exact(2)
             .map(|c| i16::from_le_bytes([c[0], c[1]]) as f32 / 32768.0)
@@ -605,7 +648,8 @@ mod ab_tests {
             .filter(|(i, _)| i % 2 == 0)
             .flat_map(|(_, c)| c.iter().copied())
             .collect();
-        let (holed, _) = decode_final(&mut state, &chopped, Some("pt"), 4, 0, true).expect("decode");
+        let (holed, _) =
+            decode_final(&mut state, &chopped, Some("pt"), 4, 0, true).expect("decode");
         eprintln!("[forensics] chopped: {holed:?}");
 
         let clean_lower = clean.to_lowercase();
@@ -656,17 +700,24 @@ mod ab_tests {
             let words = collect_words(&state, 0);
             assert!(!words.is_empty(), "no word timings for {name}");
             let spread = words.last().unwrap().t1_ms.saturating_sub(words[0].t0_ms);
-            assert!(spread > 500, "degenerate spans for {name}: spread {spread}ms");
-            let dump: Vec<String> =
-                words.iter().take(6).map(|w| format!("{}@{}-{}", w.text, w.t0_ms, w.t1_ms)).collect();
+            assert!(
+                spread > 500,
+                "degenerate spans for {name}: spread {spread}ms"
+            );
+            let dump: Vec<String> = words
+                .iter()
+                .take(6)
+                .map(|w| format!("{}@{}-{}", w.text, w.t0_ms, w.t1_ms))
+                .collect();
             eprintln!("[ab]   words: {} …", dump.join(" "));
         }
     }
 
     fn dirs_model_path() -> std::path::PathBuf {
         let home = std::env::var("HOME").unwrap();
-        std::path::PathBuf::from(home)
-            .join("Library/Application Support/app.callout.desktop/models/whisper/ggml-small-q5_1.bin")
+        std::path::PathBuf::from(home).join(
+            "Library/Application Support/app.callout.desktop/models/whisper/ggml-small-q5_1.bin",
+        )
     }
 
     fn decode_with(

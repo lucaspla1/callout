@@ -20,8 +20,12 @@ pub enum RpcStatus {
     Connecting,
     /// The consent modal is (or is about to be) open inside the Discord client.
     AwaitingApproval,
-    Ready { username: String },
-    AuthError { message: String },
+    Ready {
+        username: String,
+    },
+    AuthError {
+        message: String,
+    },
     Disconnected,
 }
 
@@ -39,14 +43,15 @@ pub struct RpcConfig {
 /// Spawns the connection task; subscribe to the returned sender for events.
 /// `now_ms` is the shared capture clock so speaking timestamps line up with
 /// audio timestamps downstream.
-pub fn spawn(
+/// Runs the RPC client into the caller's channel. The caller subscribes BEFORE
+/// calling so early events (first status, a fast handshake) can't be dropped —
+/// broadcast sends with zero receivers vanish.
+pub fn spawn_into(
+    tx: broadcast::Sender<RpcOut>,
     cfg: RpcConfig,
     now_ms: impl Fn() -> u64 + Send + Sync + 'static,
-) -> broadcast::Sender<RpcOut> {
-    let (tx, _) = broadcast::channel(256);
-    let tx2 = tx.clone();
+) {
     tauri::async_runtime::spawn(async move {
-        client::run_loop(cfg, tx2, now_ms).await;
+        client::run_loop(cfg, tx, now_ms).await;
     });
-    tx
 }

@@ -48,7 +48,11 @@ pub(crate) enum Job {
     /// Droppable: skip if the worker is busy.
     Partial { pcm: Vec<f32>, t_start_ms: u64 },
     /// Never dropped.
-    Final { pcm: Vec<f32>, t_start_ms: u64, t_end_ms: u64 },
+    Final {
+        pcm: Vec<f32>,
+        t_start_ms: u64,
+        t_end_ms: u64,
+    },
 }
 
 /// Feeds capture chunks into the VAD gate (called on the capture thread).
@@ -76,8 +80,15 @@ pub fn spawn_whisper(
 ) -> (SttFeed, mpsc::UnboundedReceiver<SttEvent>) {
     let (event_tx, event_rx) = mpsc::unbounded_channel();
     let (job_tx, job_rx) = crossbeam_channel::bounded::<Job>(4);
-    whisper_engine::spawn_worker(model_path, turbo_path, languages, job_rx, event_tx, status_tx);
-    (SttFeed { gate: gate::Gate::new(job_tx) }, event_rx)
+    whisper_engine::spawn_worker(
+        model_path, turbo_path, languages, job_rx, event_tx, status_tx,
+    );
+    (
+        SttFeed {
+            gate: gate::Gate::new(job_tx),
+        },
+        event_rx,
+    )
 }
 
 #[cfg(not(any(target_os = "macos", windows)))]
@@ -92,7 +103,12 @@ pub fn spawn_whisper(
     let _ = status_tx.send(CaptionsStatus::SttError {
         message: "STT is not implemented on this platform yet".into(),
     });
-    (SttFeed { gate: gate::Gate::new(job_tx) }, event_rx)
+    (
+        SttFeed {
+            gate: gate::Gate::new(job_tx),
+        },
+        event_rx,
+    )
 }
 
 /// Development stand-in: canned phrases as word-by-word partials + finals.
@@ -117,7 +133,10 @@ impl MockStt {
                 let words: Vec<&str> = phrase.split(' ').collect();
                 for n in 1..=words.len() {
                     if tx
-                        .send(SttEvent::Partial { text: words[..n].join(" "), t_start_ms: t_start })
+                        .send(SttEvent::Partial {
+                            text: words[..n].join(" "),
+                            t_start_ms: t_start,
+                        })
                         .is_err()
                     {
                         return;

@@ -40,7 +40,10 @@ impl Default for VadConfig {
 
 enum State {
     Silence,
-    Speech { silence_ms: u32, since_partial_ms: u32 },
+    Speech {
+        silence_ms: u32,
+        since_partial_ms: u32,
+    },
 }
 
 pub struct Gate {
@@ -118,7 +121,10 @@ impl Gate {
                     self.utterance.clear();
                     self.utterance.extend(self.pre_roll.iter());
                     self.utterance.extend_from_slice(frame);
-                    self.state = State::Speech { silence_ms: 0, since_partial_ms: 0 };
+                    self.state = State::Speech {
+                        silence_ms: 0,
+                        since_partial_ms: 0,
+                    };
                 } else {
                     // Keep the pre-roll ring filled.
                     self.pre_roll.extend(frame.iter().copied());
@@ -128,9 +134,16 @@ impl Gate {
                     }
                 }
             }
-            State::Speech { silence_ms, since_partial_ms } => {
+            State::Speech {
+                silence_ms,
+                since_partial_ms,
+            } => {
                 self.utterance.extend_from_slice(frame);
-                *silence_ms = if prob < self.cfg.exit_threshold { *silence_ms + frame_ms } else { 0 };
+                *silence_ms = if prob < self.cfg.exit_threshold {
+                    *silence_ms + frame_ms
+                } else {
+                    0
+                };
                 *since_partial_ms += frame_ms;
 
                 let utt_ms = (self.utterance.len() as u64) * 1000 / TARGET_RATE as u64;
@@ -144,7 +157,11 @@ impl Gate {
                         // they are the smoking gun for a stalled silence clock.
                         crate::diag::log(&format!(
                             "utterance: {utt_ms}ms ended_by={}",
-                            if *silence_ms >= self.cfg.endpoint_silence_ms { "endpoint" } else { "cap" }
+                            if *silence_ms >= self.cfg.endpoint_silence_ms {
+                                "endpoint"
+                            } else {
+                                "cap"
+                            }
                         ));
                         let pcm = std::mem::take(&mut self.utterance);
                         let t_end_ms = self.utt_start_ms + utt_ms;

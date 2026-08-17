@@ -43,7 +43,10 @@ const MAX_OPEN_SPAN_MS: u64 = 20_000;
 
 impl SpeakingLog {
     pub fn new() -> Self {
-        Self { spans: HashMap::new(), horizon_ms: 30_000 }
+        Self {
+            spans: HashMap::new(),
+            horizon_ms: 30_000,
+        }
     }
 
     pub fn speaking_start(&mut self, user_id: &str, at_ms: u64) {
@@ -54,7 +57,10 @@ impl SpeakingLog {
                 last.end_ms = Some(at_ms.min(last.start_ms + MAX_OPEN_SPAN_MS));
             }
         }
-        spans.push(SpeakingSpan { start_ms: at_ms, end_ms: None });
+        spans.push(SpeakingSpan {
+            start_ms: at_ms,
+            end_ms: None,
+        });
         self.prune(at_ms);
     }
 
@@ -74,7 +80,9 @@ impl SpeakingLog {
             .spans
             .iter()
             .filter(|(_, spans)| {
-                spans.iter().any(|s| s.start_ms < t1 && s.end_ms.map_or(true, |e| e > t0))
+                spans
+                    .iter()
+                    .any(|s| s.start_ms < t1 && s.end_ms.map_or(true, |e| e > t0))
             })
             .map(|(id, _)| id.clone())
             .collect();
@@ -219,8 +227,10 @@ fn line_for_ids(
         [one] => {
             let m = roster.get(one);
             (
-                m.map(|m| m.display_name.clone()).unwrap_or_else(|| "?".into()),
-                m.map(|m| m.color.clone()).unwrap_or_else(|| "#9BA0AE".into()),
+                m.map(|m| m.display_name.clone())
+                    .unwrap_or_else(|| "?".into()),
+                m.map(|m| m.color.clone())
+                    .unwrap_or_else(|| "#9BA0AE".into()),
             )
         }
         many => (format!("{} speaking", many.len()), "#9BA0AE".to_string()),
@@ -253,7 +263,13 @@ mod tests {
     use super::*;
 
     fn member(id: &str, name: &str) -> Member {
-        Member { id: id.into(), display_name: name.into(), color: "#57F287".into(), avatar_url: None, muted: false }
+        Member {
+            id: id.into(),
+            display_name: name.into(),
+            color: "#57F287".into(),
+            avatar_url: None,
+            muted: false,
+        }
     }
 
     #[test]
@@ -331,7 +347,11 @@ mod tests {
     }
 
     fn word(text: &str, t0: u64, t1: u64) -> crate::stt::Word {
-        crate::stt::Word { text: text.into(), t0_ms: t0, t1_ms: t1 }
+        crate::stt::Word {
+            text: text.into(),
+            t0_ms: t0,
+            t1_ms: t1,
+        }
     }
 
     #[test]

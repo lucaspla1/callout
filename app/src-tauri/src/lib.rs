@@ -17,7 +17,7 @@ use tauri::{AppHandle, Emitter, Manager};
 use tokio::sync::broadcast;
 
 use crate::align::SpeakingLog;
-use crate::presence::{MockPresence, PresenceEvent, PresenceSource};
+use crate::presence::PresenceEvent;
 use crate::stt::{MockStt, SttEvent};
 
 /// Callout's registered Discord application. RPC for unapproved apps only
@@ -32,8 +32,8 @@ const SPEAKER_MODEL_FILE: &str = "models/speaker/wespeaker_en_voxceleb_resnet34_
 /// Ten distinct speaker colors, assigned in arrival order; the 11th person
 /// starts reusing them. Readable on the dark caption pills.
 const SPEAKER_PALETTE: [&str; 10] = [
-    "#57F287", "#FEE75C", "#EB459E", "#5865F2", "#1ABC9C",
-    "#E67E22", "#3498DB", "#ED4245", "#B57EDC", "#F4A261",
+    "#57F287", "#FEE75C", "#EB459E", "#5865F2", "#1ABC9C", "#E67E22", "#3498DB", "#ED4245",
+    "#B57EDC", "#F4A261",
 ];
 
 #[derive(Default)]
@@ -131,7 +131,11 @@ fn clear_voiceprints(app: AppHandle) {
 /// Feed mode is a tall column; captions mode is a wide bottom band.
 fn apply_overlay_size(app: &AppHandle, layout: &str) {
     if let Some(overlay) = app.get_webview_window("overlay") {
-        let (w, h) = if layout == "feed" { (520.0, 640.0) } else { (760.0, 240.0) };
+        let (w, h) = if layout == "feed" {
+            (520.0, 640.0)
+        } else {
+            (760.0, 240.0)
+        };
         let _ = overlay.set_size(tauri::LogicalSize::new(w, h));
     }
 }
@@ -183,7 +187,9 @@ fn toggle_overlay(app: &AppHandle) {
 /// position and restores click-through.
 fn toggle_move_mode(app: &AppHandle) {
     use std::sync::atomic::Ordering;
-    let Some(overlay) = app.get_webview_window("overlay") else { return };
+    let Some(overlay) = app.get_webview_window("overlay") else {
+        return;
+    };
     let entering = !MOVE_MODE.load(Ordering::Relaxed);
     MOVE_MODE.store(entering, Ordering::Relaxed);
     if entering {
@@ -204,8 +210,8 @@ fn toggle_move_mode(app: &AppHandle) {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    use tauri_plugin_global_shortcut::{Shortcut, ShortcutState};
     use std::str::FromStr;
+    use tauri_plugin_global_shortcut::{Shortcut, ShortcutState};
 
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
@@ -301,8 +307,16 @@ fn refine_with_voice(
             [one] if dur >= MIN_ENROLL_MS => {
                 if let Some(emb) = vid.embed(seg) {
                     store.enroll(one, &emb);
-                    let name = roster.get(one).map(|m| m.display_name.as_str()).unwrap_or(one);
-                    eprintln!("[voice] learned {} (sample #{}, {}ms)", name, store.samples(one), dur);
+                    let name = roster
+                        .get(one)
+                        .map(|m| m.display_name.as_str())
+                        .unwrap_or(one);
+                    eprintln!(
+                        "[voice] learned {} (sample #{}, {}ms)",
+                        name,
+                        store.samples(one),
+                        dur
+                    );
                 }
             }
             many if many.len() > 1 && dur >= MIN_MATCH_MS => {
@@ -311,11 +325,18 @@ fn refine_with_voice(
                     .iter()
                     .filter_map(|id| store.similarity(id, &emb).map(|s| (id.clone(), s)))
                     .collect();
-                let dump: Vec<String> =
-                    scored.iter().map(|(id, s)| format!("{id}:{s:.2}")).collect();
+                let dump: Vec<String> = scored
+                    .iter()
+                    .map(|(id, s)| format!("{id}:{s:.2}"))
+                    .collect();
                 if let Some(winner) = voiceid::pick_by_similarity(scored) {
                     if let Some(m) = roster.get(&winner) {
-                        eprintln!("[voice] '{}' resolved → {} ({})", line.speaker_label, m.display_name, dump.join(" "));
+                        eprintln!(
+                            "[voice] '{}' resolved → {} ({})",
+                            line.speaker_label,
+                            m.display_name,
+                            dump.join(" ")
+                        );
                         line.speaker_ids = vec![winner];
                         line.speaker_label = m.display_name.clone();
                         line.color = m.color.clone();
@@ -331,7 +352,9 @@ fn refine_with_voice(
 
 /// Overlay: click-through, at the saved position or parked bottom-center.
 fn setup_overlay_window(app: &AppHandle, settings: &settings::SettingsHandle) {
-    let Some(overlay) = app.get_webview_window("overlay") else { return };
+    let Some(overlay) = app.get_webview_window("overlay") else {
+        return;
+    };
     let _ = overlay.set_ignore_cursor_events(true);
     apply_overlay_size(app, &settings.overlay_layout());
     if let Some((x, y)) = settings.overlay_pos() {
@@ -360,25 +383,27 @@ fn spawn_pipeline(app: AppHandle, settings: settings::SettingsHandle) {
     let mock = std::env::var("CALLOUT_MOCK").ok().as_deref() == Some("1");
 
     // ── Presence source ────────────────────────────────────────────────────
-    let rpc_tx: broadcast::Sender<rpc::RpcOut> = if mock {
-        let (tx, _) = broadcast::channel(256);
-        let source = MockPresence::start(now_ms);
-        let mut source_rx = source.subscribe();
-        let tx2 = tx.clone();
+    // The main subscription (rx) is the Receiver returned by channel creation,
+    // so it exists before any source task can send — a send with zero
+    // receivers is silently dropped, and the mock's instant ChannelJoined
+    // actually lost that race in CI once.
+    let (rpc_tx, mut rx) = broadcast::channel::<rpc::RpcOut>(256);
+    if mock {
+        let (ptx, mut source_rx) = broadcast::channel(64);
+        let tx2 = rpc_tx.clone();
         tauri::async_runtime::spawn(async move {
             while let Ok(ev) = source_rx.recv().await {
                 let _ = tx2.send(rpc::RpcOut::Presence(ev));
             }
         });
-        tx
+        presence::start_mock_presence(ptx, now_ms);
     } else {
         let client_id = std::env::var("CALLOUT_CLIENT_ID")
             .ok()
             .filter(|v| !v.is_empty())
             .unwrap_or_else(|| DEFAULT_DISCORD_CLIENT_ID.to_string());
-        rpc::spawn(rpc::RpcConfig { client_id }, now_ms)
-    };
-    let mut rx = rpc_tx.subscribe();
+        rpc::spawn_into(rpc_tx.clone(), rpc::RpcConfig { client_id }, now_ms);
+    }
 
     // ── Captions source (capture → VAD → whisper), or mock ────────────────
     // Models are provisioned first (first run downloads them with progress);
@@ -418,8 +443,11 @@ fn spawn_pipeline(app: AppHandle, settings: settings::SettingsHandle) {
             // Windows runs whisper on CPU (no Metal): the turbo finals model is
             // ~2 GB of RAM and pegs cores for seconds per final there, so finals
             // fall back to the small model. Revisit with a GPU backend (Vulkan).
-            let turbo_path =
-                if cfg!(windows) { None } else { Some(data_dir2.join(TURBO_MODEL_FILE)) };
+            let turbo_path = if cfg!(windows) {
+                None
+            } else {
+                Some(data_dir2.join(TURBO_MODEL_FILE))
+            };
             let (feed, mut rx) = stt::spawn_whisper(
                 data_dir2.join(MODEL_FILE),
                 turbo_path,

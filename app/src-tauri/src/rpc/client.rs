@@ -75,7 +75,12 @@ async fn session<S: AsyncRead + AsyncWrite + Unpin>(
     tx: &broadcast::Sender<RpcOut>,
     now_ms: &(impl Fn() -> u64 + Send + Sync),
 ) -> Result<(), CallError> {
-    wire::write_frame(conn, op::HANDSHAKE, &json!({ "v": 1, "client_id": cfg.client_id })).await?;
+    wire::write_frame(
+        conn,
+        op::HANDSHAKE,
+        &json!({ "v": 1, "client_id": cfg.client_id }),
+    )
+    .await?;
     let ready = wait_ready(conn).await?;
     let cdn_host = ready
         .pointer("/data/config/cdn_host")
@@ -83,9 +88,17 @@ async fn session<S: AsyncRead + AsyncWrite + Unpin>(
         .unwrap_or("cdn.discordapp.com")
         .to_string();
 
-    let self_id = ready.pointer("/data/user/id").and_then(|v| v.as_str()).map(String::from);
+    let self_id = ready
+        .pointer("/data/user/id")
+        .and_then(|v| v.as_str())
+        .map(String::from);
 
-    let mut sess = Session { conn, tx, dispatch_q: VecDeque::new(), cdn_host };
+    let mut sess = Session {
+        conn,
+        tx,
+        dispatch_q: VecDeque::new(),
+        cdn_host,
+    };
 
     let username = auth::ensure_token(&mut sess, cfg).await?;
     if let Some(user_id) = self_id {
@@ -94,9 +107,12 @@ async fn session<S: AsyncRead + AsyncWrite + Unpin>(
     sess.emit_status(RpcStatus::Ready { username });
 
     // Subscribe dance (§3.4): channel tracking first, then the current channel if any.
-    sess.call(json!({ "cmd": "SUBSCRIBE", "evt": "VOICE_CHANNEL_SELECT", "args": {} })).await?;
+    sess.call(json!({ "cmd": "SUBSCRIBE", "evt": "VOICE_CHANNEL_SELECT", "args": {} }))
+        .await?;
     let mut current: Option<String> = None;
-    let snap = sess.call(json!({ "cmd": "GET_SELECTED_VOICE_CHANNEL", "args": {} })).await?;
+    let snap = sess
+        .call(json!({ "cmd": "GET_SELECTED_VOICE_CHANNEL", "args": {} }))
+        .await?;
     if let Some(id) = snap.get("id").and_then(|v| v.as_str()).map(String::from) {
         current = sess.enter_channel(&id).await?;
     }
@@ -126,11 +142,12 @@ async fn wait_ready<S: AsyncRead + AsyncWrite + Unpin>(conn: &mut S) -> Result<V
             match f.op {
                 op::PING => wire::write_frame(conn, op::PONG, &f.json).await?,
                 op::CLOSE => {
-                    return Err(CallError::Protocol(format!("handshake rejected: {}", f.json)))
+                    return Err(CallError::Protocol(format!(
+                        "handshake rejected: {}",
+                        f.json
+                    )))
                 }
-                op::FRAME
-                    if f.json.get("evt").and_then(|v| v.as_str()) == Some("READY") =>
-                {
+                op::FRAME if f.json.get("evt").and_then(|v| v.as_str()) == Some("READY") => {
                     return Ok(f.json)
                 }
                 _ => {}
@@ -171,9 +188,7 @@ impl<'a, S: AsyncRead + AsyncWrite + Unpin> Session<'a, S> {
                 let f = wire::read_frame(conn).await?;
                 match f.op {
                     op::PING => wire::write_frame(conn, op::PONG, &f.json).await?,
-                    op::CLOSE => {
-                        return Err(CallError::Protocol(format!("closed: {}", f.json)))
-                    }
+                    op::CLOSE => return Err(CallError::Protocol(format!("closed: {}", f.json))),
                     op::FRAME => {
                         let ours =
                             f.json.get("nonce").and_then(|v| v.as_str()) == Some(nonce.as_str());
@@ -218,10 +233,14 @@ impl<'a, S: AsyncRead + AsyncWrite + Unpin> Session<'a, S> {
     /// Returns the channel id we ended up in (None if the user already left).
     async fn enter_channel(&mut self, channel_id: &str) -> Result<Option<String>, CallError> {
         for evt in PER_CHANNEL_EVENTS {
-            self.call(json!({ "cmd": "SUBSCRIBE", "evt": evt, "args": { "channel_id": channel_id } }))
-                .await?;
+            self.call(
+                json!({ "cmd": "SUBSCRIBE", "evt": evt, "args": { "channel_id": channel_id } }),
+            )
+            .await?;
         }
-        let mut snap = self.call(json!({ "cmd": "GET_SELECTED_VOICE_CHANNEL", "args": {} })).await?;
+        let mut snap = self
+            .call(json!({ "cmd": "GET_SELECTED_VOICE_CHANNEL", "args": {} }))
+            .await?;
         // Right after joining, Discord sometimes answers with an empty roster;
         // one delayed re-snapshot fills it (missing members otherwise trickle
         // in only as they change state).
@@ -231,15 +250,26 @@ impl<'a, S: AsyncRead + AsyncWrite + Unpin> Session<'a, S> {
             .is_none_or(|v| v.is_empty());
         if empty_roster {
             tokio::time::sleep(Duration::from_millis(700)).await;
-            snap = self.call(json!({ "cmd": "GET_SELECTED_VOICE_CHANNEL", "args": {} })).await?;
+            snap = self
+                .call(json!({ "cmd": "GET_SELECTED_VOICE_CHANNEL", "args": {} }))
+                .await?;
         }
         match serde_json::from_value::<proto::SelectedChannel>(snap) {
             Ok(ch) => {
-                let members: Vec<Member> =
-                    ch.voice_states.iter().map(|e| self.member_from(e)).collect();
-                let channel_name =
-                    if ch.name.is_empty() { "Voice call".to_string() } else { ch.name.clone() };
-                self.emit(PresenceEvent::ChannelJoined { channel_name, members });
+                let members: Vec<Member> = ch
+                    .voice_states
+                    .iter()
+                    .map(|e| self.member_from(e))
+                    .collect();
+                let channel_name = if ch.name.is_empty() {
+                    "Voice call".to_string()
+                } else {
+                    ch.name.clone()
+                };
+                self.emit(PresenceEvent::ChannelJoined {
+                    channel_name,
+                    members,
+                });
                 Ok(Some(ch.id))
             }
             Err(_) => {
@@ -279,12 +309,18 @@ impl<'a, S: AsyncRead + AsyncWrite + Unpin> Session<'a, S> {
             }
             "SPEAKING_START" => {
                 if let Some(uid) = data.get("user_id").and_then(|v| v.as_str()) {
-                    self.emit(PresenceEvent::SpeakingStart { user_id: uid.to_string(), at_ms: now_ms() });
+                    self.emit(PresenceEvent::SpeakingStart {
+                        user_id: uid.to_string(),
+                        at_ms: now_ms(),
+                    });
                 }
             }
             "SPEAKING_STOP" => {
                 if let Some(uid) = data.get("user_id").and_then(|v| v.as_str()) {
-                    self.emit(PresenceEvent::SpeakingStop { user_id: uid.to_string(), at_ms: now_ms() });
+                    self.emit(PresenceEvent::SpeakingStop {
+                        user_id: uid.to_string(),
+                        at_ms: now_ms(),
+                    });
                 }
             }
             "VOICE_STATE_CREATE" | "VOICE_STATE_UPDATE" => {
@@ -299,7 +335,9 @@ impl<'a, S: AsyncRead + AsyncWrite + Unpin> Session<'a, S> {
             }
             "VOICE_STATE_DELETE" => {
                 if let Ok(entry) = serde_json::from_value::<proto::VoiceStateEntry>(data) {
-                    self.emit(PresenceEvent::MemberLeft { user_id: entry.user.id });
+                    self.emit(PresenceEvent::MemberLeft {
+                        user_id: entry.user.id,
+                    });
                 }
             }
             _ => {}

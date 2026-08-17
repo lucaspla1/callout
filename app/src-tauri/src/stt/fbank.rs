@@ -33,7 +33,11 @@ fn mel_banks() -> Vec<Vec<(usize, f32)>> {
                 let freq = bin as f32 * SAMPLE_RATE / FFT_SIZE as f32;
                 let fm = mel(freq);
                 let w = if fm > left && fm < right {
-                    if fm <= center { (fm - left) / step } else { (right - fm) / step }
+                    if fm <= center {
+                        (fm - left) / step
+                    } else {
+                        (right - fm) / step
+                    }
                 } else {
                     0.0
                 };
@@ -58,7 +62,8 @@ pub fn compute(pcm: &[f32]) -> Vec<[f32; NUM_MELS]> {
     // Povey window.
     let window: Vec<f32> = (0..FRAME_LEN)
         .map(|n| {
-            let hann = 0.5 - 0.5 * (2.0 * std::f32::consts::PI * n as f32 / (FRAME_LEN as f32 - 1.0)).cos();
+            let hann = 0.5
+                - 0.5 * (2.0 * std::f32::consts::PI * n as f32 / (FRAME_LEN as f32 - 1.0)).cos();
             hann.powf(0.85)
         })
         .collect();
@@ -129,8 +134,7 @@ mod tests {
             .map(|i| (2.0 * std::f32::consts::PI * 440.0 * i as f32 / 16_000.0).sin() * 0.3)
             .collect();
         let feats = compute(&pcm);
-        let mean: f32 =
-            feats.iter().map(|r| r[10]).sum::<f32>() / feats.len() as f32;
+        let mean: f32 = feats.iter().map(|r| r[10]).sum::<f32>() / feats.len() as f32;
         assert!(mean.abs() < 1e-3, "post-CMN mean {mean}");
     }
 
