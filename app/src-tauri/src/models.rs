@@ -208,15 +208,17 @@ mod tests {
     use super::*;
 
     #[test]
-    fn missing_lists_absent_models() {
+    fn missing_lists_absent_active_models() {
         let dir = std::env::temp_dir().join(format!("callout-models-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
-        assert_eq!(missing(&dir).len(), MODELS.len());
+        let active_models: Vec<_> = active().collect();
+        assert_eq!(missing(&dir).len(), active_models.len());
         // Create one; it disappears from the missing list.
-        let p = dir.join(MODELS[0].rel_path);
+        let p = dir.join(active_models[0].rel_path);
         std::fs::create_dir_all(p.parent().unwrap()).unwrap();
         std::fs::write(&p, b"stub").unwrap();
-        assert_eq!(missing(&dir).len(), MODELS.len() - 1);
+        assert_eq!(missing(&dir).len(), active_models.len() - 1);
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }
