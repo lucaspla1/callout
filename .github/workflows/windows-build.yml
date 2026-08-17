@@ -36,8 +36,12 @@ jobs:
         # 16s per 1s of audio). clang + Ninja lets ggml's -march=native kick in.
         env:
           CMAKE_GENERATOR: Ninja
-          CC: clang
-          CXX: clang++
+          # clang-cl (LLVM's MSVC-compatible driver): plain `clang` chokes on
+          # the -fPIC the Rust toolchain injects for msvc targets.
+          CC: clang-cl
+          CXX: clang-cl
+          CFLAGS: /arch:AVX2
+          CXXFLAGS: /arch:AVX2
         run: cd app && npx tauri build --bundles nsis
       - name: Prove whisper was built by clang
         shell: bash
@@ -51,8 +55,10 @@ jobs:
         shell: bash
         env:
           CMAKE_GENERATOR: Ninja
-          CC: clang
-          CXX: clang++
+          CC: clang-cl
+          CXX: clang-cl
+          CFLAGS: /arch:AVX2
+          CXXFLAGS: /arch:AVX2
         run: |
           curl -sL -o "$RUNNER_TEMP/ggml-small-q5_1.bin" https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-small-q5_1.bin
           cd app/src-tauri
