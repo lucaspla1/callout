@@ -244,7 +244,7 @@ is an ObjC class; the HAL calls are plain C) — that's what AudioCap proves out
 
 ### 2.4 TCC permission story
 
-- Add `NSAudioCaptureUsageDescription` ("Callout captions Discord voice chat so you can read
+- Add `NSAudioCaptureUsageDescription` ("Unmute captions Discord voice chat so you can read
   it in-game.") to the app's Info.plist — in Tauri v2, via an `Info.plist` file next to
   `tauri.conf.json` in `src-tauri/` (Tauri merges it into the bundle).
 - The system prompt ("wants to record audio from other applications") appears on the first

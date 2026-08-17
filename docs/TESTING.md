@@ -1,8 +1,8 @@
 # Testing Unmute
 
-Thanks for helping test Unmute — live captions for Discord voice chat, with each line labeled by who said it. Built for deaf and hard-of-hearing gamers first, free and open source.
+Thanks for helping test Unmute — live captions for Discord voice chat, with each line labeled by who said it. Built for deaf and hard-of-hearing gamers first and currently MIT-licensed.
 
-This guide gets you from zero to captions. It's honest about the rough edges: builds are unsigned (your OS will warn you), and Discord currently limits who can connect (there's a step where Lucas adds you as a tester — or a self-serve alternative if you'd rather not wait).
+This guide gets you from zero to captions. It's honest about the rough edges: builds are unsigned (your OS will warn you), and Discord currently limits who can connect, so Lucas must add you as an approved tester before the authorization flow will work.
 
 ## What you need
 
@@ -13,9 +13,9 @@ This guide gets you from zero to captions. It's honest about the rough edges: bu
 
 ## Step 1 — Get access to connect (one-time)
 
-Discord gates the local-RPC interface: until an app is approved by Discord, only the app's owner and up to 50 invited testers can authorize it. So before your first launch, pick one of two doors:
+Discord gates the local-RPC interface: until an app is approved by Discord, only the app's owner and up to 50 invited testers can authorize it.
 
-### Door A (easiest): ask Lucas to add you as a tester
+### Ask Lucas to add you as a tester
 
 1. Send Lucas your **exact Discord username** — the unique lowercase one from your profile (click your avatar, bottom-left of Discord; e.g. `mariana_plays`). Not your display name, and no `#1234` tag — those are gone.
 2. Lucas invites that username in the Discord developer portal.
@@ -24,39 +24,7 @@ Discord gates the local-RPC interface: until an app is approved by Discord, only
 
 If the email never arrives, double-check the username you sent, and ask Lucas to re-invite. There are 50 slots total, so if you stop testing, tell Lucas so the slot can go to someone else.
 
-### Door B (self-serve): bring your own Discord app ID
-
-No waiting on anyone: you create your own (free, empty) Discord application, and Unmute connects as *that* app. Discord always lets an application's owner authorize their own app, so there's no tester list to be on. Takes about two minutes:
-
-1. Go to <https://discord.com/developers/applications> and click **New Application**. Name it anything — that name is what Discord's consent popup will show you (e.g. "My Unmute").
-2. No bot, no special permissions, nothing to enable — except one thing: open the **OAuth2** page and
-   - turn **Public Client** **on**,
-   - add `http://127.0.0.1` under **Redirects** (it's never actually visited; Discord just wants one registered).
-   Save changes.
-3. On **General Information**, copy the **Application ID** (a long number).
-4. Tell Unmute to use it, via the `CALLOUT_CLIENT_ID` environment variable:
-
-   **Windows** — open Command Prompt and run (paste your own ID):
-
-   ```
-   setx CALLOUT_CLIENT_ID 123456789012345678
-   ```
-
-   Close the terminal, then start Unmute normally (Start menu). If it doesn't take, sign out of Windows and back in once.
-
-   **macOS** — quickest (lasts until you log out/reboot; re-run it after a reboot):
-
-   ```
-   launchctl setenv CALLOUT_CLIENT_ID 123456789012345678
-   ```
-
-   then quit and relaunch Unmute. If you prefer something permanent, add
-   `export CALLOUT_CLIENT_ID=123456789012345678` to `~/.zshrc` and launch the app from a terminal with
-   `/Applications/Unmute.app/Contents/MacOS/Unmute` (Finder/Dock launches don't read `.zshrc`, hence the `launchctl` route above).
-
-5. Launch Unmute — the Discord consent popup will show your app's name. Approve it and you're set. (A settings-screen field for this is planned so the env var won't be needed forever.)
-
-Switching between Door A and Door B later is fine — Unmute just asks for a fresh Discord authorization.
+The code has a `CALLOUT_CLIENT_ID` override for controlled development with a Discord application the operator is authorized to use. It is not a documented public-distribution workaround: obtain written guidance from Discord before offering or promoting that flow to bypass the tester limit.
 
 ## Step 2 — Install
 
@@ -105,7 +73,7 @@ There's also a tray/menu-bar icon with **Open Unmute**, **Show / hide overlay**,
 - **Windows captions are less accurate than macOS for now.** Windows runs a smaller speech model entirely on CPU; macOS additionally runs a larger model for the final caption text. Closing this gap is on the roadmap.
 - **Exclusive-fullscreen games hide the overlay.** Set your game to **borderless windowed** (most competitive games default to it) and the overlay stays visible.
 - **Discord voice only.** Unmute captions Discord's audio, not in-game voice chat or other apps.
-- The default connection is capped at **50 testers** until Discord approves the app (that's Door A/B above, and it's Discord's policy, not ours).
+- The connection is capped at **50 invited testers** until Discord approves the app (that's Discord's policy, not ours).
 
 ## Reporting issues
 

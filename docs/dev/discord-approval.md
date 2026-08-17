@@ -111,7 +111,7 @@ per app-ID is the current ceiling on captioning Discord voice." Lead with it eve
 >
 > **The problem.** The 50-tester allowlist is, in practice, a cap of 50 deaf/HoH users. I'd
 > like the restriction lifted so the app can be public. I'm happy to meet any requirements:
-> the code is MIT-licensed and auditable, I'll complete identity verification, add Terms of
+> the code is currently MIT-licensed and auditable, I'll complete identity verification, add Terms of
 > Service, restrict scopes further if asked, and make any changes your team needs.
 >
 > Thank you for your time — and for StreamKit having proven this local surface can be done
@@ -162,30 +162,29 @@ page; make it look finished.
   it's silence or a canned "RPC isn't accepting new apps."
 - **Timeline if it works: months.** Overlayed-style approval came through human contact, not
   process. Budget a quarter minimum; don't put it on the roadmap's critical path.
-- **What improves the odds over time:** a full 50/50 tester list, a public waitlist number,
-  BYO-client-id adoption (proof of demand Discord's gate is suppressing), press/community
-  attention on the accessibility angle, and a spotless portal page. Re-approach quarterly
+- **What improves the odds over time:** a well-run invited-tester program, consented demand
+  evidence, press/community attention on the accessibility angle, and a spotless portal page.
+  Re-approach quarterly
   with the updated numbers rather than spamming.
 
-## 7. The plan that doesn't need permission (fallback ladder)
+## 7. Distribution plan while approval is pending
 
 1. **Now — 50 testers.** Portal → App Testers → invite by Discord username; tester accepts
    the emailed invite. Covers the first testing wave. Recycle slots of inactive testers.
-2. **At the cap — BYO client ID.** Any user can create their own Discord application
-   (2 minutes, free, no bot), flip on Public Client, and run Unmute as its owner —
-   Discord's documented rule ("owner and whitelisted users") makes this work for everyone,
-   forever, with zero Discord approval. Already shipped via `CALLOUT_CLIENT_ID`
-   (tester-facing steps in [docs/TESTING.md](../TESTING.md)); the M4 settings UI should make
-   it a paste-one-field affair. This is the real public-release mechanism until approval.
-3. **In parallel — the §2 campaign.** Ticket + DDevs server + a11y form, refreshed
+2. **At the cap — waitlist or another invited cohort.** Do not position the existing
+   `CALLOUT_CLIENT_ID` override as a public escape hatch. Ask Discord in writing whether a
+   bring-your-own application-ID flow is permitted before documenting or productizing it;
+   the Developer Policy prohibits attempts to circumvent API limits.
+3. **In parallel — the §2 campaign.** Ticket + DDevs server + accessibility form, refreshed
    quarterly with growth numbers. If Discord ever flips `RPC_PRIVATE_BETA`, the default
-   client ID starts working for everyone and steps 1–2 become legacy.
+   client ID starts working for everyone and the tester-only flow becomes legacy.
 
 ---
 
 ## Sources
 
 - Official RPC topic (tester gate, 50 spots, post-approval wording): <https://docs.discord.com/developers/topics/rpc>
+- Discord Developer Policy (API limits and circumvention): <https://support-dev.discord.com/hc/en-us/articles/8563934450327-Discord-Developer-Policy>
 - Historical "private beta / signed up and been approved" preamble: <https://github.com/discord/discord-api-docs/blob/3caae2cf67fa807961ce5591f1ebb9ed12ee7efd/docs/topics/RPC.md>
 - Userdoccers — `rpc` scope rule (owner + whitelisted users), `RPC_PRIVATE_BETA` flag: <https://docs.discord.food/topics/oauth2> · <https://docs.discord.food/resources/application>
 - Approved-RPC-apps tracking gist (Hacksore/Overlayed): <https://gist.github.com/Hacksore/24bf9f8a950b740cd914d62975accff0>

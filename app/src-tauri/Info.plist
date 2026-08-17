@@ -3,6 +3,6 @@
 <plist version="1.0">
 <dict>
 	<key>NSAudioCaptureUsageDescription</key>
-	<string>Callout captions Discord voice chat so you can read it in-game. It captures only Discord's audio output — never your microphone or other apps.</string>
+	<string>Unmute captions Discord voice chat so you can read it in-game. It captures only Discord's audio output — never your microphone or other apps.</string>
 </dict>
 </plist>

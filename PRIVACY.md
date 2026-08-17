@@ -1,10 +1,14 @@
 # Privacy
 
-Unmute is local-first by design: audio is captured on your machine, transcribed on your machine, and thrown away. There is no cloud, no account, no telemetry, no analytics, no crash reporting, and no auto-updater phoning home. This page is the complete story — if the app ever does more than what's written here, that's a bug; please report it.
+_Last updated: 2026-08-17. This describes the current pre-alpha and calls out known release blockers; it is not approval to distribute the build publicly._
+
+Unmute is local-first by design: audio is captured and transcribed on your machine. There is no Unmute cloud account, cloud STT, telemetry, analytics, crash-reporting service, or auto-updater. Current pre-alpha builds still have privacy defects listed below and must not be represented as release-ready.
 
 ## What Unmute listens to
 
-Only the Discord desktop app's audio output — the voices in your voice channel. Per-process capture means Unmute never opens your microphone and never hears your game, music, or any other app. Audio lives in memory just long enough to be transcribed, then it's gone. Transcripts exist only on your screen; they are not saved.
+Only the Discord desktop app's audio output — the voices in your voice channel. Per-process capture means Unmute does not open your microphone or intentionally capture the game, music, or another app. Audio normally lives in memory just long enough to be transcribed. The optional debug mode described below is an explicit exception.
+
+Known pre-alpha defect: production stderr currently includes transcript text and Discord identity details. Stderr may be retained by a terminal, launcher, CI runner, or crash collection outside Unmute. This must be removed and regression-tested before external distribution.
 
 ## Every network connection the app makes
 
@@ -27,10 +31,11 @@ Everything lives in one folder:
 | File | Contents |
 |---|---|
 | `settings.json` | Overlay preferences and language selection. Nothing sensitive. |
-| `tokens.json` | Your Discord OAuth token. Planned: move into the OS keychain once builds are code-signed (unsigned builds break keychain access across updates). |
-| `voiceprints.json` | Small numeric voice fingerprints used to tell speakers apart when several people talk at once. These are derived vectors — not audio, and audio can't be reconstructed from them. They never leave your machine. **Delete this file to make Unmute forget all voices.** |
+| `tokens.json` | Discord OAuth access and refresh tokens. They are currently plaintext with filesystem permissions, which is a release blocker. They must move to macOS Keychain or Windows Credential Manager (or equivalent OS-protected encryption), with migration/revocation handling, before distribution. |
+| `voiceprints.json` | Numeric voice embeddings used to distinguish speakers. They are not raw audio or intended to retain spoken words, but may be used to distinguish or identify a person, so Unmute treats them as sensitive biometric data. Current automatic persistence without separate informed opt-in is a release blocker. **Delete this file to make Unmute forget stored embeddings.** |
+| `unmute-diag.log` | Structural diagnostic events. The intended contract forbids transcripts, display/channel names, Discord IDs, tokens, or voiceprint values; current stderr leaks remain a separate known defect. |
 | `models/` | The downloaded speech and speaker models. |
-| `debug-audio/` | **Only exists if you set the `CALLOUT_DEBUG_AUDIO=1` environment variable.** Then the app saves WAV recordings of transcribed audio for debugging. This is real recording of your channel — read the consent note below before enabling it. Off by default; nothing is written otherwise. |
+| `debug-audio/` | **Only exists if you set the `CALLOUT_DEBUG_AUDIO=1` environment variable.** Then the app saves WAV recordings of transcribed audio for debugging. This is real recording of your channel — read the consent note below before enabling it. Off by default; public builds should remove or separately gate it with an explicit warning. |
 
 ## How to wipe everything
 
@@ -40,9 +45,9 @@ Everything lives in one folder:
 
 ## Consent and etiquette
 
-Live captioning that stores nothing is assistive listening — you're reading what you were already entitled to hear. Still:
+Rules for listening, captioning, biometric processing, and recording vary by jurisdiction and context. This policy does not determine whether a user is legally entitled to process a conversation.
 
-- **Tell your channel you use captions.** It's good manners, it normalizes accessibility tools, and mis-transcriptions make more sense to everyone when people know captions are in play.
+- **Tell your channel you use captions and voice attribution.** It is good practice and may be legally required. Persistent voice enrollment must remain disabled until a compliant consent and deletion design is approved.
 - **Recording is different.** Some jurisdictions require every participant's consent to record a conversation. Unmute stores no audio and no transcripts by default — but if you enable `CALLOUT_DEBUG_AUDIO=1`, you are recording, and those rules can apply to you. Get consent first.
 
 ---
