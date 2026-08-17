@@ -22,8 +22,17 @@ jobs:
       - name: Install frontend deps
         shell: bash
         run: cd app && npm ci
+      - name: Install Ninja (for the clang cmake builds)
+        run: choco install ninja --no-progress -y
       - name: Build Tauri app (NSIS)
         shell: bash
+        # MSVC builds whisper.cpp's ggml kernels without AVX2/FMA — scalar
+        # reference code that decodes ~15x slower than realtime (field-measured
+        # 16s per 1s of audio). clang + Ninja lets ggml's -march=native kick in.
+        env:
+          CMAKE_GENERATOR: Ninja
+          CC: clang
+          CXX: clang++
         run: cd app && npx tauri build --bundles nsis
       - name: Upload installer
         uses: actions/upload-artifact@v4
