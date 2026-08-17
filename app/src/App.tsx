@@ -36,7 +36,7 @@ function App() {
   const { status, captions, channel, members } = useCallout();
   const [languages, setLanguages] = useState<string[]>([]);
   const [opacity, setOpacity] = useState(0.92);
-  const [dl, setDl] = useState<{ id: string; pct: number } | null>(null);
+  const [dl, setDl] = useState<{ id: string; pct: number; mb: number } | null>(null);
   const [fontPx, setFontPx] = useState(16);
   const [identity, setIdentity] = useState<IdentityMode>("name");
   const [layout, setLayout] = useState<"captions" | "feed">("captions");
@@ -50,7 +50,11 @@ function App() {
     const unDl = listen<ModelDl>("model_dl", (e) => {
       const ev = e.payload;
       if (ev.state === "progress") {
-        setDl({ id: ev.id, pct: Math.min(100, Math.round((100 * ev.got) / Math.max(ev.total, 1))) });
+        setDl({
+          id: ev.id,
+          pct: Math.min(100, Math.round((100 * ev.got) / Math.max(ev.total, 1))),
+          mb: Math.round(ev.total / 1_000_000),
+        });
       } else if (ev.state === "all_ready" || ev.state === "failed") {
         setDl(null);
       }
@@ -125,7 +129,7 @@ function App() {
       )}
       {dl && (
         <div className="hint">
-          ⬇︎ Downloading {dl.id} — {dl.pct}%
+          ⬇︎ Downloading speech model ({dl.id}) — {dl.pct}% of {dl.mb} MB. One-time, stored locally.
         </div>
       )}
 

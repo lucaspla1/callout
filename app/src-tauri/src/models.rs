@@ -1,7 +1,9 @@
 //! First-run model provisioning: streams the required model files to the app
 //! data dir with progress events, resume (HTTP Range) and retries, then hands
 //! control to the captions pipeline. Pattern adapted from Handy's downloader
-//! (MIT). Hash pinning is a pre-release TODO.
+//! (MIT). Downloads are SHA-256 pinned: these files are parsed by C/C++
+//! runtimes (ggml, onnxruntime), so a tampered or truncated blob must never
+//! reach them. Whisper pins verified against Hugging Face LFS pointers.
 
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -15,6 +17,8 @@ pub struct ModelSpec {
     pub url: &'static str,
     /// Display estimate only; the server's Content-Length is authoritative.
     pub approx_bytes: u64,
+    /// Pinned SHA-256 of the finished file (lowercase hex).
+    pub sha256: &'static str,
 }
 
 pub const MODELS: &[ModelSpec] = &[
@@ -23,12 +27,14 @@ pub const MODELS: &[ModelSpec] = &[
         rel_path: "models/whisper/ggml-small-q5_1.bin",
         url: "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-small-q5_1.bin",
         approx_bytes: 190_085_487,
+        sha256: "ae85e4a935d7a567bd102fe55afc16bb595bdb618e11b2fc7591bc08120411bb",
     },
     ModelSpec {
         id: "whisper-large-v3-turbo-q5_0",
         rel_path: "models/whisper/ggml-large-v3-turbo-q5_0.bin",
         url: "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-large-v3-turbo-q5_0.bin",
         approx_bytes: 574_041_195,
+        sha256: "394221709cd5ad1f40c46e6031ca61bce88931e6e088c188294c6d5a55ffa7e2",
     },
     ModelSpec {
         id: "speaker-wespeaker-resnet34",
@@ -36,6 +42,7 @@ pub const MODELS: &[ModelSpec] = &[
         // Upstream release tag really is spelled "recongition".
         url: "https://github.com/k2-fsa/sherpa-onnx/releases/download/speaker-recongition-models/wespeaker_en_voxceleb_resnet34_LM.onnx",
         approx_bytes: 26_000_000,
+        sha256: "e9848563da86f263117134dfd7ad63c92355b37de492b55e325400c9d9c39012",
     },
 ];
 
@@ -106,6 +113,14 @@ async fn download_with_retries(
         }
         match stream_to_partial(spec, &partial, emit).await {
             Ok(()) => {
+                // Integrity gate before the file can ever reach ggml/ort.
+                let got = file_sha256(&partial)?;
+                if got != spec.sha256 {
+                    let _ = std::fs::remove_file(&partial);
+                    last_err = format!("checksum mismatch (got {got})");
+                    eprintln!("[models] {} attempt {}: {last_err}", spec.id, attempt + 1);
+                    continue;
+                }
                 std::fs::rename(&partial, dest).map_err(|e| format!("rename: {e}"))?;
                 return Ok(());
             }
@@ -119,6 +134,14 @@ async fn download_with_retries(
         "{} download failed after retries: {last_err}",
         spec.id
     ))
+}
+
+fn file_sha256(path: &Path) -> Result<String, String> {
+    use sha2::{Digest, Sha256};
+    let mut f = std::fs::File::open(path).map_err(|e| format!("open for hash: {e}"))?;
+    let mut hasher = Sha256::new();
+    std::io::copy(&mut f, &mut hasher).map_err(|e| format!("hash read: {e}"))?;
+    Ok(format!("{:x}", hasher.finalize()))
 }
 
 async fn stream_to_partial(
