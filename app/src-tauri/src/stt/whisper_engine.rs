@@ -520,6 +520,44 @@ fn run_full(
 /// transcribed text (same decode, timing is a post-hoc computation).
 /// Run explicitly with fixtures:
 ///   CALLOUT_AB_DIR=<dir-with-wavs> cargo test --release -- --ignored ab_token
+/// CI speed gate: the small model must decode faster than realtime on the
+/// build machine, or captions can't keep up with speech (field-measured 15x
+/// slower when ggml is built by MSVC without AVX2/FMA — kernel speed is
+/// content-independent, so synthetic audio measures it fine).
+///   CALLOUT_BENCH_MODEL=<ggml-small.bin> cargo test --release -- --ignored small_model
+#[cfg(test)]
+mod speed_gate {
+    use super::*;
+    use whisper_rs::{WhisperContext, WhisperContextParameters};
+
+    #[test]
+    #[ignore]
+    fn small_model_decodes_faster_than_realtime() {
+        let Ok(model) = std::env::var("CALLOUT_BENCH_MODEL") else {
+            eprintln!("CALLOUT_BENCH_MODEL not set; skipping");
+            return;
+        };
+        let ctx = WhisperContext::new_with_params(&model, WhisperContextParameters::default())
+            .expect("load small model");
+        let mut state = ctx.create_state().expect("state");
+        const SECS: usize = 5;
+        let pcm: Vec<f32> = (0..SECS * TARGET_RATE as usize)
+            .map(|i| (i as f32 * 0.05).sin() * 0.01)
+            .collect();
+        let t0 = std::time::Instant::now();
+        let _ = decode(&mut state, &pcm, Some("en"), 4);
+        let rtf = t0.elapsed().as_secs_f32() / SECS as f32;
+        eprintln!(
+            "[bench] realtime factor: {rtf:.3} ({}ms for {SECS}s audio)",
+            t0.elapsed().as_millis()
+        );
+        assert!(
+            rtf < 0.8,
+            "small-model decode slower than realtime (rtf={rtf:.2}) — ggml built without SIMD?"
+        );
+    }
+}
+
 #[cfg(test)]
 mod ab_tests {
     use super::*;

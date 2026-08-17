@@ -16,6 +16,11 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: app/src-tauri
+          # Cargo does NOT rebuild cmake-built C deps when only CC/CXX env
+          # changes — a warm cache shipped an MSVC-built (scalar, 15x slow)
+          # whisper straight through the "clang fix". Bump this key whenever
+          # the C toolchain setup changes.
+          prefix-key: v1-clang
       - uses: actions/setup-node@v4
         with:
           node-version: 20
@@ -34,6 +39,25 @@ jobs:
           CC: clang
           CXX: clang++
         run: cd app && npx tauri build --bundles nsis
+      - name: Prove whisper was built by clang
+        shell: bash
+        run: |
+          cache=$(find app/src-tauri/target -path "*whisper*" -name CMakeCache.txt | head -1)
+          if [ -z "$cache" ]; then echo "::error::no whisper CMakeCache.txt found"; exit 1; fi
+          grep -E "CMAKE_C_COMPILER:" "$cache" || true
+          grep -qE "CMAKE_C_COMPILER:.*clang" "$cache" \
+            || { echo "::error::whisper was NOT built by clang - scalar ggml would ship"; exit 1; }
+      - name: STT speed gate — decode must beat realtime
+        shell: bash
+        env:
+          CMAKE_GENERATOR: Ninja
+          CC: clang
+          CXX: clang++
+        run: |
+          curl -sL -o "$RUNNER_TEMP/ggml-small-q5_1.bin" https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-small-q5_1.bin
+          cd app/src-tauri
+          CALLOUT_BENCH_MODEL="$RUNNER_TEMP/ggml-small-q5_1.bin" \
+            cargo test --release small_model_decodes_faster_than_realtime -- --ignored --nocapture
       - name: Upload installer
         uses: actions/upload-artifact@v4
         with:
