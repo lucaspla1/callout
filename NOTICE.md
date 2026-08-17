@@ -28,4 +28,4 @@ Unmute is MIT-licensed ([LICENSE](LICENSE)) and stands on the shoulders of these
 
 - The model-downloader pattern (streaming, resume, progress) is adapted from [Handy](https://github.com/cjpais/Handy) (MIT).
 
-The full dependency trees (all under permissive licenses) are declared in [`app/src-tauri/Cargo.toml`](app/src-tauri/Cargo.toml) and [`app/package.json`](app/package.json).
+The dependency trees are locked in [`app/src-tauri/Cargo.lock`](app/src-tauri/Cargo.lock) and [`app/package-lock.json`](app/package-lock.json). This notice is not yet a target-complete release inventory: the Rust tree includes MPL-2.0 components, and the final Windows/macOS dependency sets and exact license texts still need automated generation and review. Every packaged artifact must include the product license, complete third-party notices, model provenance/attribution, and required source locations before release.

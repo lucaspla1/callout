@@ -1,6 +1,6 @@
 # Discord RPC/IPC Integration Guide
 
-How Callout learns *who is in the voice channel* and *who is speaking right now* — without a bot,
+How Unmute learns *who is in the voice channel* and *who is speaking right now* — without a bot,
 by talking to the **local Discord client** over its RPC/IPC interface. The protocol is officially
 documented but "private beta" gated (§4.4); the command set has been stable for ~8 years and is
 what Overlayed, StreamKit, and the Elgato Stream Deck use.
@@ -111,7 +111,7 @@ app cannot ship. Options, in order of preference:
    and relays the token JSON back verbatim (approach described from their AGPL source; no code
    reused). Works regardless of PKCE support, but you must run infrastructure and sign-in dies
    with your domain.
-3. **Embed the secret in the binary/repo — never.** Anyone could mint tokens as "Callout", and it
+3. **Embed the secret in the binary/repo — never.** Anyone could mint tokens as "Unmute", and it
    would torpedo a later Discord review.
 4. *(Known in the wild, avoid)*: some overlays hijack **StreamKit's** approved `client_id`
    (`207646673902501888`) + an `rpc_token` from StreamKit's endpoint to skip consent and approval —
@@ -272,12 +272,13 @@ Discord developer support — budget months, not days.
 needed) → OAuth2 page: add redirect `http://127.0.0.1`, enable **Public Client** → App Testers
 page: invite by email (≤ 50; testers must accept the emailed invite before they can authorize).
 
-**Distribution strategy for an OSS accessibility app:** ship a **"bring your own client_id"**
-setting from day one — any user can create a free Discord application in two minutes, paste its ID
-into Callout, and self-authorize as that app's owner: no gate, no secrets (PKCE public client).
-Pursue official approval in parallel so the default client_id "just works". Discord now points new
-projects at the **Social SDK**, but it targets games embedding Discord features and cannot read the
-local client's current voice channel — RPC remains the only mechanism for our use case.
+**Distribution constraint:** use the application's invited-tester list while pursuing official
+approval. The `CALLOUT_CLIENT_ID` override is useful for controlled development with an application
+the operator is authorized to use, but do not ship or promote bring-your-own client IDs as a public
+way around the tester ceiling without written confirmation from Discord. The Developer Policy
+prohibits attempts to circumvent API limits. Discord now points new projects at the **Social SDK**,
+but it targets games embedding Discord features and cannot read the local client's current voice
+channel — RPC remains the only currently implemented mechanism for this use case.
 
 ---
 
@@ -368,7 +369,7 @@ pub enum Command {
     Unsubscribe    { nonce: String, evt: EventKind, args: SubscribeArgs },
 }
 
-#[derive(Clone, Debug)]                     // what the rest of Callout consumes
+#[derive(Clone, Debug)]                     // what the rest of Unmute consumes
 pub enum RpcEvent {
     Connected { self_user: User },
     ChannelJoined { channel: VoiceChannel },   // includes full roster

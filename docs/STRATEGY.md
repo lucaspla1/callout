@@ -1,13 +1,13 @@
-# Callout — Build Strategy
+# Unmute — Build Strategy
 
-> Working title. Live captions for Discord voice chat, rendered as an in-game overlay, with per-speaker labels. Free and open source.
-> Last updated: 2026-08-15 · Phase-1 market/tech research: [`research/fase-1-panorama-e-stack.md`](../research/fase-1-panorama-e-stack.md)
+> Live captions for Discord voice chat, rendered as an in-game overlay, with per-speaker labels.
+> Last updated: 2026-08-17 · Current handoff: [`PROJECT_STATE.md`](PROJECT_STATE.md) · Phase-1 market/tech research: [`research/fase-1-panorama-e-stack.md`](../research/fase-1-panorama-e-stack.md)
 
 ## Product principles
 
 1. **The accessibility core is free, forever.** Local transcription, speaker labels, and the overlay never sit behind a paywall. (Sustainability comes from donations and optional convenience — see below.)
 2. **Local-first.** Audio never leaves the machine by default. Transcribe-and-discard; no audio storage.
-3. **ToS-safe by construction.** No client mods, no process injection, no undocumented bot voice-receive. Only official/local surfaces: Discord RPC + OS-level per-process audio capture.
+3. **Minimize platform and anti-cheat risk by construction.** No client mods, process injection, or bot voice-receive. Use authorized local Discord RPC for presence and OS-level per-process audio capture; treat current Discord policy and app approval as explicit release gates.
 4. **Gaming is the wedge, not the ceiling.** The capture layer is source-agnostic so a future "caption any app" mode (Zoom, Meet, videos) is a feature flag away — but v0.1 is Discord-only, done well.
 5. **English-first product; multilingual engine.** UI and docs in English. The STT default model is multilingual (English + Portuguese work day one); UI strings externalized from day one so localization is cheap later.
 6. **Windows is the target; macOS is the dev platform.** All platform-specific code lives behind traits, so macOS support is nearly free — but Windows is what we optimize, test, and ship first.
@@ -45,7 +45,7 @@ Ordered so each one de-risks the scariest remaining unknown and is demoable on i
 - **M0 — Skeleton.** Tauri v2 app scaffolded; Rust workspace with empty modules; CI building Windows + macOS artifacts.
 - **M1 — "Who's speaking" overlay (RPC only, no audio).** Join a voice channel → overlay shows members and lights up whoever is speaking, with name + color. *This alone is Overlayed-parity and already useful. De-risks: RPC auth, event stream, overlay rendering over a game.*
 - **M2 — Captions, unattributed.** Discord audio → VAD → whisper → rolling caption line in the overlay. *De-risks: per-process capture, STT latency on CPU while a game runs.*
-- **M3 — Attribution.** Merge M1 + M2: each caption line carries the speaker's name and color. *This is the product moment nobody else has shipped open-source.*
+- **M3 — Attribution.** Merge M1 + M2: each caption line carries the speaker's name and color. *This is the distinctive product moment.*
 - **M4 — Livable.** Settings (position/size/opacity/font/language), global hotkey, first-run onboarding (Discord app authorization), caption history scrollback, graceful states (Discord not running, not in a channel).
 - **v0.1 — Public release.** GitHub release with signed binaries, README with a 30-second demo GIF, announcement to the accessibility community (Can I Play That covered CaptionsRush; they'll care about a free OSS alternative).
 
@@ -61,12 +61,12 @@ Out of scope for v0.1: bot mode, cloud STT, translation, non-Discord sources, Ma
 
 ## Sustainability (not the point, but the door stays open)
 
-Models that fit an accessibility OSS app, in order of fit:
+Models that fit an accessibility-first app, in order of fit:
 
 1. **Donations/sponsorship** — GitHub Sponsors + Ko-fi from day one (costs nothing to add). Craig (Discord's recorder bot) has run on Patreon for years; precedent exists in this exact niche.
 2. **Grants** — accessibility and OSS funds (NLnet, GitHub Accelerator, platform accessibility funds). A shipped, documented, used project is what makes these applications credible.
 3. **Optional hosted convenience, later** — a paid "cloud boost" subscription (managed cloud STT for people who want max accuracy with zero setup; BYO-key stays free). Open-core done right: the paid thing is convenience, never access.
-4. **Not doing**: ads, paywalled captions, dual licensing. They poison the accessibility mission and the contributor well.
+4. **Not doing**: ads or paywalled core captions. Licensing and commercial-exception policy are under review; accessibility access must remain the product constraint. See [`legal/LICENSING.md`](legal/LICENSING.md).
 
 ## Decision log
 
@@ -78,3 +78,6 @@ Models that fit an accessibility OSS app, in order of fit:
 | 2026-08-15 | Windows-first target, macOS as dev platform via trait abstraction |
 | 2026-08-15 | Tauri v2 + Rust; MIT license; "Callout" as working title (rename before release) |
 | 2026-08-15 | v0.1 STT: VAD-chunked multilingual whisper.cpp; true-streaming engine is v0.2 behind the same trait |
+| 2026-08-17 | Product name changed to Unmute; run trademark/name screening before public beta |
+| 2026-08-17 | Favor the chronological chip-less caption-pill layout; roster-attached speech bubbles rejected for overlapping conversation |
+| 2026-08-17 | Future licensing is under review: commercial restrictions would be source-available, not open source |
