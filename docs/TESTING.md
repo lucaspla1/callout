@@ -8,7 +8,8 @@ This guide gets you from zero to captions. It's honest about the rough edges: bu
 
 - **Windows 10 (version 2004) or newer**, or **macOS 14.4 (Sonoma) or newer**. These floors are real: the per-app audio capture Unmute uses didn't exist in the OS before them.
 - **The Discord desktop app**, installed and logged in. Discord in a browser won't work — Unmute talks to the desktop client on your machine (the same local interface Discord's own StreamKit overlay uses).
-- **Internet on first launch** — Unmute downloads its speech-recognition models once (~220 MB on Windows, ~790 MB on macOS).
+- **Internet on first launch** — Unmute downloads up to ~790 MB of speech and speaker models once. If the optional high-quality model cannot be downloaded, captions still start with the smaller local model.
+- **About 1.2 GB of working memory for speech recognition** when the optional quality model is loaded (roughly 370 MB with the smaller-model fallback). This is an experimental quality/CPU tradeoff we are measuring on Windows hardware.
 - A download link for the build. Grab it from [Releases](https://github.com/lucaspla1/unmute/releases) if one is published; otherwise Lucas will send you the build directly.
 
 ## Step 1 — Get access to connect (one-time)
@@ -102,7 +103,7 @@ There's also a tray/menu-bar icon with **Open Unmute**, **Show / hide overlay**,
 ## Known limitations (please don't file these — we know)
 
 - **Unsigned builds** → the SmartScreen/Gatekeeper hoops above. Proper signing is planned.
-- **Windows captions are less accurate than macOS for now.** Windows runs a smaller speech model entirely on CPU; macOS additionally runs a larger model for the final caption text. Closing this gap is on the roadmap.
+- **Windows speech quality is still experimental.** Live, long, or backlogged speech stays on the smaller CPU model; short final captions can use the optional larger model. We are validating the quality/CPU trade-off before making this the release default.
 - **Exclusive-fullscreen games hide the overlay.** Set your game to **borderless windowed** (most competitive games default to it) and the overlay stays visible.
 - **Discord voice only.** Unmute captions Discord's audio, not in-game voice chat or other apps.
 - The default connection is capped at **50 testers** until Discord approves the app (that's Door A/B above, and it's Discord's policy, not ours).

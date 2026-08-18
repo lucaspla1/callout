@@ -1,6 +1,6 @@
 [package]
 name = "callout"
-version = "0.1.0"
+version = "0.1.2"
 description = "Live captions for Discord voice chat, in an in-game overlay"
 authors = ["Lucas Pitchon and contributors"]
 license = "MIT"

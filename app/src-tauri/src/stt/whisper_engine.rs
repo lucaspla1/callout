@@ -1,19 +1,203 @@
-//! whisper.cpp worker: one context, one thread, VAD-cut utterances in,
-//! Partial/Final text out. Decode parameters and the audio_ctx latency trick
-//! per docs/dev/stt-engine.md §3.3.
+//! whisper.cpp worker: one worker thread, a small context plus an optional
+//! Turbo finals context, and VAD-cut utterances in → Partial/Final text out.
+//! Decode parameters follow docs/dev/stt-engine.md §3.3.
 
 use std::path::PathBuf;
 use std::sync::{Arc, RwLock};
 
 use whisper_rs::{FullParams, SamplingStrategy, WhisperContext, WhisperContextParameters};
 
-use super::{Job, SttEvent, Word};
+use super::mailbox::{DecodeJob, JobMailboxRx};
+use super::{SttEvent, Word};
 use crate::capture::TARGET_RATE;
 use crate::settings::Settings;
 use crate::CaptionsStatus;
 
 /// whisper misbehaves on very short inputs; pad to at least ~1.1 s.
 const MIN_SAMPLES: usize = (TARGET_RATE as usize * 11) / 10;
+const WINDOWS_TURBO_FINAL_MAX_MS: u64 = 6_000;
+const WINDOWS_FINAL_BACKLOG_MS: u128 = 1_600;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum DecodeModel {
+    Small,
+    Turbo,
+}
+
+impl DecodeModel {
+    const fn as_str(self) -> &'static str {
+        match self {
+            Self::Small => "small",
+            Self::Turbo => "turbo",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SearchMode {
+    Greedy,
+    Beam { size: i32 },
+}
+
+impl SearchMode {
+    const fn as_str(self) -> &'static str {
+        match self {
+            Self::Greedy => "greedy",
+            Self::Beam { size: 3 } => "beam3",
+            Self::Beam { size: 5 } => "beam5",
+            Self::Beam { .. } => "beam",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum AudioContext {
+    Trimmed,
+    Full,
+}
+
+impl AudioContext {
+    const fn as_str(self) -> &'static str {
+        match self {
+            Self::Trimmed => "trimmed",
+            Self::Full => "full",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct DecodeProfile {
+    model: DecodeModel,
+    search: SearchMode,
+    context: AudioContext,
+}
+
+const SMALL_GREEDY_TRIMMED: DecodeProfile = DecodeProfile {
+    model: DecodeModel::Small,
+    search: SearchMode::Greedy,
+    context: AudioContext::Trimmed,
+};
+const SMALL_BEAM3_FULL: DecodeProfile = DecodeProfile {
+    model: DecodeModel::Small,
+    search: SearchMode::Beam { size: 3 },
+    context: AudioContext::Full,
+};
+const TURBO_GREEDY_TRIMMED: DecodeProfile = DecodeProfile {
+    model: DecodeModel::Turbo,
+    search: SearchMode::Greedy,
+    context: AudioContext::Trimmed,
+};
+const TURBO_BEAM5_FULL: DecodeProfile = DecodeProfile {
+    model: DecodeModel::Turbo,
+    search: SearchMode::Beam { size: 5 },
+    context: AudioContext::Full,
+};
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum FinalReason {
+    Endpoint,
+    Cap,
+    Backlog,
+    LongAudio,
+}
+
+impl FinalReason {
+    const fn as_str(self) -> &'static str {
+        match self {
+            Self::Endpoint => "endpoint",
+            Self::Cap => "cap",
+            Self::Backlog => "backlog",
+            Self::LongAudio => "long_audio",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct FinalSelection {
+    profile: DecodeProfile,
+    reason: FinalReason,
+    timing: WordTiming,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum WordTiming {
+    Token,
+    Utterance,
+}
+
+impl WordTiming {
+    const fn as_str(self) -> &'static str {
+        match self {
+            Self::Token => "token",
+            Self::Utterance => "utterance",
+        }
+    }
+}
+
+fn final_selection(profile: DecodeProfile, reason: FinalReason) -> FinalSelection {
+    // Turbo + trimmed encoder context + token timestamps has a deterministic
+    // decoder-loop mode on 5–8 s Portuguese utterances. Without token timings,
+    // the same profile keeps its quality/speed advantage and does not repeat.
+    // Empty words deliberately selects the existing whole-utterance speaker
+    // attribution fallback.
+    let timing = if profile == TURBO_GREEDY_TRIMMED {
+        WordTiming::Utterance
+    } else {
+        WordTiming::Token
+    };
+    FinalSelection {
+        profile,
+        reason,
+        timing,
+    }
+}
+
+fn select_final_profile(
+    windows: bool,
+    turbo_available: bool,
+    ended_by_cap: bool,
+    queue_ms: u128,
+    audio_ms: u64,
+) -> FinalSelection {
+    if windows {
+        if ended_by_cap {
+            return final_selection(SMALL_GREEDY_TRIMMED, FinalReason::Cap);
+        }
+        if queue_ms > WINDOWS_FINAL_BACKLOG_MS {
+            return final_selection(SMALL_GREEDY_TRIMMED, FinalReason::Backlog);
+        }
+        if audio_ms > WINDOWS_TURBO_FINAL_MAX_MS {
+            return final_selection(SMALL_GREEDY_TRIMMED, FinalReason::LongAudio);
+        }
+        return final_selection(
+            if turbo_available {
+                TURBO_GREEDY_TRIMMED
+            } else {
+                SMALL_BEAM3_FULL
+            },
+            FinalReason::Endpoint,
+        );
+    }
+
+    final_selection(
+        // Preserve the existing macOS behavior: Turbo beam5 when its optional
+        // finals model is loaded, otherwise the small greedy fallback.
+        if turbo_available {
+            TURBO_BEAM5_FULL
+        } else {
+            SMALL_GREEDY_TRIMMED
+        },
+        if ended_by_cap {
+            FinalReason::Cap
+        } else {
+            FinalReason::Endpoint
+        },
+    )
+}
+
+fn realtime_factor(decode_ms: u128, audio_ms: u64) -> f64 {
+    decode_ms as f64 / audio_ms.max(1) as f64
+}
 
 /// whisper's classic hallucinations on noise/beeps/silence (YouTube training
 /// artifacts) — "Thanks for watching." shows up on every join beep. Matched
@@ -126,11 +310,19 @@ fn write_wav_16k_mono(path: &std::path::Path, pcm: &[f32]) {
     let _ = std::fs::write(path, out);
 }
 
+fn decode_thread_count(available: usize, windows: bool) -> i32 {
+    // Leave more headroom on Windows for Discord and the game. Three worker
+    // threads is the balanced profile: two risks falling behind, while four
+    // leaves too little CPU headroom during continuous speech.
+    let max_threads = if windows { 3 } else { 6 };
+    available.saturating_sub(2).clamp(2, max_threads) as i32
+}
+
 pub fn spawn_worker(
     model_path: PathBuf,
     turbo_path: Option<PathBuf>,
     settings: Arc<RwLock<Settings>>,
-    job_rx: crossbeam_channel::Receiver<Job>,
+    mut job_rx: JobMailboxRx,
     event_tx: tokio::sync::mpsc::UnboundedSender<SttEvent>,
     status_tx: tokio::sync::mpsc::UnboundedSender<CaptionsStatus>,
 ) {
@@ -160,10 +352,9 @@ pub fn spawn_worker(
                     return;
                 }
             };
-            // Second, bigger context for finals: partials stay fast on the small
-            // model, finals get re-decoded on large-v3-turbo with beam search —
-            // the biggest available quality jump for pt/es. Falls back to the
-            // small model when the file is absent or fails to load.
+            // Optional second context for high-quality finals. Model choice,
+            // search strategy, and encoder context are selected independently
+            // per Final below; partials always remain on the small model.
             let turbo = turbo_path.filter(|p| p.is_file()).and_then(|p| {
                 let t0 = std::time::Instant::now();
                 match WhisperContext::new_with_params(&p, WhisperContextParameters::default())
@@ -182,116 +373,142 @@ pub fn spawn_worker(
                     }
                 }
             });
-            let mut turbo_state = turbo.map(|(ctx, state)| (ctx, state));
+            let mut turbo_state = turbo;
             eprintln!(
-                "[stt] finals engine: {}",
-                if turbo_state.is_some() { "large-v3-turbo (beam)" } else { "small (greedy)" }
+                "[stt] finals models: {}",
+                if turbo_state.is_some() {
+                    "small + large-v3-turbo"
+                } else {
+                    "small only"
+                }
             );
             let _ = status_tx.send(CaptionsStatus::SttReady);
 
-            // Cap lower on Windows: whisper shares the CPU with the game there
-            // (macOS decodes on Metal, so its threads are cheap).
-            let max_threads = if cfg!(windows) { 4 } else { 6 };
-            let threads = std::thread::available_parallelism()
-                .map(|n| n.get().saturating_sub(2).clamp(2, max_threads))
-                .unwrap_or(4) as i32;
+            let available_threads = std::thread::available_parallelism()
+                .map(|n| n.get())
+                .unwrap_or(4);
+            let threads = decode_thread_count(available_threads, cfg!(windows));
+            crate::diag::log(&format!(
+                "stt profile: decode_threads={threads} available_threads={available_threads} partial_model=small partial_search=greedy partial_context=trimmed partial_cadence_ms={} partial_tail_s={}",
+                if cfg!(windows) { 1_600 } else { 600 },
+                if cfg!(windows) { 6 } else { 0 }
+            ));
             let mut last_final = String::new();
             // Language is decided once per utterance and cached for its partials.
             let mut utt_key: u64 = u64::MAX;
             let mut utt_lang: Option<String> = None;
 
-            while let Ok(mut job) = job_rx.recv() {
-                // Coalesce a backlog: prefer the newest job; never skip a Final.
-                while let Ok(newer) = job_rx.try_recv() {
-                    job = match (job, newer) {
-                        (Job::Final { .. } | Job::Partial { .. }, f @ Job::Final { .. }) => f,
-                        (f @ Job::Final { .. }, Job::Partial { .. }) => f,
-                        (Job::Partial { .. }, p @ Job::Partial { .. }) => p,
-                    };
-                }
-                let (pcm, t_start_ms) = match &job {
-                    Job::Partial { pcm, t_start_ms } | Job::Final { pcm, t_start_ms, .. } => {
-                        (pcm.clone(), *t_start_ms)
+            while let Ok(job) = job_rx.recv_next() {
+                let (utterance_id, queue_ms) = match &job {
+                    DecodeJob::Partial(job) => {
+                        (job.utterance_id, job.queued_at.elapsed().as_millis())
+                    }
+                    DecodeJob::Final(job) => {
+                        (job.utterance_id, job.queued_at.elapsed().as_millis())
                     }
                 };
-                if t_start_ms != utt_key {
-                    utt_key = t_start_ms;
-                    let allowed = settings.read().map(|s| s.languages.clone()).unwrap_or_default();
-                    utt_lang = choose_language(&mut state, &pcm, &allowed, threads);
+                let new_utterance = utterance_id != utt_key;
+                if new_utterance {
+                    utt_key = utterance_id;
+                    utt_lang = None;
                 }
                 match job {
-                    Job::Partial { pcm, t_start_ms } => {
-                        // CPU decode (Windows): a partial re-decodes the whole
-                        // utterance, so long monologues fall behind realtime.
-                        // Decode only the trailing window there — the final
-                        // still gets the full utterance.
-                        let pcm: &[f32] = if cfg!(windows) {
-                            const TAIL: usize = 6 * TARGET_RATE as usize;
-                            &pcm[pcm.len().saturating_sub(TAIL)..]
-                        } else {
-                            &pcm
-                        };
-                        let p_t0 = std::time::Instant::now();
-                        if let Some(text) = decode(&mut state, pcm, utt_lang.as_deref(), threads) {
-                            let p_ms = p_t0.elapsed().as_millis();
-                            // A partial slower than its cadence means decode is
-                            // behind realtime — the #1 field question on CPU.
-                            if p_ms > 900 {
-                                crate::diag::log(&format!(
-                                    "slow partial: {p_ms}ms for {}ms audio",
-                                    pcm.len() as u64 * 1000 / TARGET_RATE as u64
-                                ));
-                            }
+                    DecodeJob::Partial(job) => {
+                        let decode_t0 = std::time::Instant::now();
+                        if new_utterance {
+                            let allowed = settings
+                                .read()
+                                .map(|s| s.languages.clone())
+                                .unwrap_or_default();
+                            utt_lang =
+                                choose_language(&mut state, &job.pcm, &allowed, threads);
+                        }
+                        let audio_ms =
+                            job.pcm.len() as u64 * 1_000 / TARGET_RATE as u64;
+                        let decoded = decode(&mut state, &job.pcm, utt_lang.as_deref(), threads);
+                        let decode_ms = decode_t0.elapsed().as_millis();
+                        let rtf = realtime_factor(decode_ms, audio_ms);
+                        crate::diag::log(&format!(
+                            "partial decode: model={} search={} context={} reason=live queue_ms={queue_ms} decode_ms={decode_ms} audio_ms={audio_ms} rtf={rtf:.3} utterance_span_ms={} threads={threads} window_offset_ms={}",
+                            SMALL_GREEDY_TRIMMED.model.as_str(),
+                            SMALL_GREEDY_TRIMMED.search.as_str(),
+                            SMALL_GREEDY_TRIMMED.context.as_str(),
+                            job.pcm_end_ms.saturating_sub(job.utterance_start_ms),
+                            job.pcm_start_ms.saturating_sub(job.utterance_start_ms),
+                        ));
+                        if let Some(text) = decoded {
                             let stats = collect_stats(&state);
                             if !text.is_empty()
                                 && !is_known_hallucination(&text)
                                 && stats.mean_p >= 0.4
                             {
-                                let _ = event_tx.send(SttEvent::Partial { text, t_start_ms });
+                                let _ = event_tx.send(SttEvent::Partial {
+                                    text,
+                                    t_start_ms: job.pcm_start_ms,
+                                    t_end_ms: job.pcm_end_ms,
+                                });
                             }
                         }
                     }
-                    Job::Final { pcm, t_start_ms, t_end_ms } => {
+                    DecodeJob::Final(job) => {
+                        let pcm = job.pcm;
+                        let t_start_ms = job.t_start_ms;
+                        let t_end_ms = job.t_end_ms;
+                        let audio_ms = pcm.len() as u64 * 1_000 / TARGET_RATE as u64;
+                        let selection = select_final_profile(
+                            cfg!(windows),
+                            turbo_state.is_some(),
+                            job.ended_by_cap,
+                            queue_ms,
+                            audio_ms,
+                        );
                         if let Some(dir) = debug_audio_dir(&model_path) {
                             write_wav_16k_mono(&dir.join(format!("utt_{t_start_ms}.wav")), &pcm);
                         }
                         let decode_t0 = std::time::Instant::now();
-                        // Finals decode on the big model (beam search) when
-                        // available; partials stay on the small one. For
-                        // multi-language users, re-pick the language on the FULL
-                        // utterance — more audio = reliable detection.
-                        let (fin_state, beam) = match turbo_state.as_mut() {
-                            Some((_ctx, s)) => (s, true),
-                            None => (&mut state, false),
+                        let fin_state = match selection.profile.model {
+                            DecodeModel::Small => &mut state,
+                            DecodeModel::Turbo => &mut turbo_state
+                                .as_mut()
+                                .expect("Turbo profile requires a loaded Turbo state")
+                                .1,
                         };
                         let allowed =
                             settings.read().map(|s| s.languages.clone()).unwrap_or_default();
-                        if allowed.len() > 1 {
-                            utt_lang = choose_language(fin_state, &pcm, &allowed, threads);
-                        }
-                        // Finals also collect word timings (proven not to change
-                        // the text — see ab_tests below) for per-word attribution.
-                        if let Some((text, words)) = decode_final(
+                        // A Final may be the utterance's first job. Pick once
+                        // from its full audio; for several allowed languages,
+                        // this also deliberately refreshes a Partial's guess.
+                        utt_lang = choose_language(fin_state, &pcm, &allowed, threads);
+                        // Most Finals collect per-word timings. The Windows
+                        // Turbo/trimmed profile deliberately uses the existing
+                        // whole-utterance fallback; see final_selection().
+                        let decoded = decode_final(
                             fin_state,
                             &pcm,
                             utt_lang.as_deref(),
                             threads,
                             t_start_ms,
-                            beam,
-                        ) {
+                            selection.profile,
+                            selection.timing,
+                        );
+                        let decode_ms = decode_t0.elapsed().as_millis();
+                        let rtf = realtime_factor(decode_ms, audio_ms);
+                        crate::diag::log(&format!(
+                            "final decode: model={} search={} context={} timestamps={} reason={} queue_ms={queue_ms} decode_ms={decode_ms} audio_ms={audio_ms} rtf={rtf:.3} threads={threads}",
+                            selection.profile.model.as_str(),
+                            selection.profile.search.as_str(),
+                            selection.profile.context.as_str(),
+                            selection.timing.as_str(),
+                            selection.reason.as_str(),
+                        ));
+                        if let Some((text, words)) = decoded {
                             // Hallucination guards: empty, exact repeat of the
                             // previous final, a known noise hallucination, or a
                             // low-confidence decode (probability gates).
                             let stats = collect_stats(fin_state);
-                            crate::diag::log(&format!(
-                                "final decode: {}ms ({}, {:.1}s audio)",
-                                decode_t0.elapsed().as_millis(),
-                                if beam { "turbo" } else { "small" },
-                                pcm.len() as f32 / TARGET_RATE as f32
-                            ));
                             if is_low_confidence(&stats) {
                                 eprintln!(
-                                    "[stt] gated final (mean_p={:.2} no_speech={:.2} logprob={:.2}): {text:?}",
+                                    "[stt] gated final (mean_p={:.2} no_speech={:.2} logprob={:.2})",
                                     stats.mean_p, stats.no_speech_prob, stats.avg_logprob
                                 );
                             } else if !text.is_empty()
@@ -358,24 +575,30 @@ fn decode(
     lang: Option<&str>,
     threads: i32,
 ) -> Option<String> {
-    run_full(state, pcm, lang, threads, false, false)?;
+    run_full(state, pcm, lang, threads, false, SMALL_GREEDY_TRIMMED)?;
     Some(collect_text(state))
 }
 
 /// Final decode: word timings on the shared clock (empty if degenerate →
-/// whole-utterance attribution fallback), optionally with beam search when
-/// running on the big finals model.
+/// whole-utterance attribution fallback). Model selection happens in the
+/// worker; this function applies the independently selected search/context.
 fn decode_final(
     state: &mut whisper_rs::WhisperState,
     pcm: &[f32],
     lang: Option<&str>,
     threads: i32,
     base_ms: u64,
-    beam: bool,
+    profile: DecodeProfile,
+    timing: WordTiming,
 ) -> Option<(String, Vec<Word>)> {
-    run_full(state, pcm, lang, threads, true, beam)?;
+    let token_timestamps = timing == WordTiming::Token;
+    run_full(state, pcm, lang, threads, token_timestamps, profile)?;
     let text = collapse_repeats(&collect_text(state));
-    let words = collect_words(state, base_ms);
+    let words = if token_timestamps {
+        collect_words(state, base_ms)
+    } else {
+        Vec::new()
+    };
     Some((text, words))
 }
 
@@ -491,13 +714,18 @@ fn collect_words(state: &whisper_rs::WhisperState, base_ms: u64) -> Vec<Word> {
     words
 }
 
+fn trimmed_audio_ctx(samples: usize) -> i32 {
+    let len_s = samples as f32 / TARGET_RATE as f32;
+    ((len_s / 30.0 * 1500.0) as i32 + 128).clamp(512, 1500)
+}
+
 fn run_full(
     state: &mut whisper_rs::WhisperState,
     pcm: &[f32],
     lang: Option<&str>,
     threads: i32,
     token_timestamps: bool,
-    beam: bool,
+    profile: DecodeProfile,
 ) -> Option<()> {
     let mut padded;
     let samples = if pcm.len() < MIN_SAMPLES {
@@ -508,14 +736,12 @@ fn run_full(
         pcm
     };
 
-    // Beam search on finals (quality); greedy on partials (speed).
-    let strategy = if beam {
-        SamplingStrategy::BeamSearch {
-            beam_size: 5,
+    let strategy = match profile.search {
+        SearchMode::Greedy => SamplingStrategy::Greedy { best_of: 1 },
+        SearchMode::Beam { size } => SamplingStrategy::BeamSearch {
+            beam_size: size,
             patience: 1.0,
-        }
-    } else {
-        SamplingStrategy::Greedy { best_of: 1 }
+        },
     };
     let mut params = FullParams::new(strategy);
     params.set_language(Some(lang.unwrap_or("auto")));
@@ -524,25 +750,23 @@ fn run_full(
     params.set_suppress_blank(true);
     params.set_suppress_nst(true);
     params.set_temperature(0.0);
-    // Finals need timestamp processing on, or token t0/t1 come back -1 and
-    // word-level attribution silently falls back (text is unaffected either
-    // way — proven byte-identical by ab_tests).
+    params.set_temperature_inc(0.2);
+    // Token timestamps enable word attribution. The Windows Turbo/trimmed
+    // profile deliberately disables them because they can also change Turbo's
+    // decoded text and trigger repeated sentence sequences; Small and the
+    // full-context Turbo path keep them enabled.
     params.set_no_timestamps(!token_timestamps);
     params.set_print_special(false);
     params.set_print_progress(false);
     params.set_print_realtime(false);
     params.set_print_timestamps(false);
     params.set_n_threads(threads);
-    // The latency trick: shrink the encoder context to the real audio length —
-    // PARTIALS ONLY. Beam-search finals get the full context: trimmed context
-    // degrades cross-attention for beams and was producing decoder loops on
-    // Portuguese ("X. X. X.").
-    if beam {
-        params.set_audio_ctx(0); // 0 = whisper default (full context)
-    } else {
-        let len_s = samples.len() as f32 / TARGET_RATE as f32;
-        let audio_ctx = ((len_s / 30.0 * 1500.0) as i32 + 128).clamp(512, 1500);
-        params.set_audio_ctx(audio_ctx);
+    match profile.context {
+        // The CPU latency path: scale encoder work to the actual input.
+        AudioContext::Trimmed => params.set_audio_ctx(trimmed_audio_ctx(samples.len())),
+        // Beam finals use the model's full encoder context. The repo previously
+        // observed PT decoder loops when beam search shared the trimmed context.
+        AudioContext::Full => params.set_audio_ctx(0),
     }
     if token_timestamps {
         params.set_token_timestamps(true);
@@ -555,8 +779,9 @@ fn run_full(
     Some(())
 }
 
-/// A/B harness: proves that enabling token timestamps does not change the
-/// transcribed text (same decode, timing is a post-hoc computation).
+/// A/B harness: checks that enabling token timestamps does not change Small's
+/// transcribed text. Turbo/trimmed is covered separately because timestamps do
+/// affect its decoder and are disabled in that Windows production profile.
 /// Run explicitly with fixtures:
 ///   CALLOUT_AB_DIR=<dir-with-wavs> cargo test --release -- --ignored ab_token
 /// CI speed gate: the small model must decode faster than realtime on the
@@ -568,6 +793,73 @@ fn run_full(
 mod speed_gate {
     use super::*;
     use whisper_rs::{WhisperContext, WhisperContextParameters};
+
+    #[test]
+    fn partial_profile_is_small_greedy_trimmed() {
+        assert_eq!(
+            SMALL_GREEDY_TRIMMED,
+            DecodeProfile {
+                model: DecodeModel::Small,
+                search: SearchMode::Greedy,
+                context: AudioContext::Trimmed,
+            }
+        );
+    }
+
+    #[test]
+    fn windows_short_endpoint_prefers_turbo_then_small_beam_fallback() {
+        let turbo = select_final_profile(true, true, false, 1_600, 6_000);
+        assert_eq!(turbo.profile, TURBO_GREEDY_TRIMMED);
+        assert_eq!(turbo.reason, FinalReason::Endpoint);
+        assert_eq!(turbo.timing, WordTiming::Utterance);
+
+        let no_turbo = select_final_profile(true, false, false, 1_600, 6_000);
+        assert_eq!(no_turbo.profile, SMALL_BEAM3_FULL);
+        assert_eq!(no_turbo.reason, FinalReason::Endpoint);
+        assert_eq!(no_turbo.timing, WordTiming::Token);
+    }
+
+    #[test]
+    fn windows_cap_long_audio_and_backlog_fall_back_to_small_greedy() {
+        let cap = select_final_profile(true, true, true, 2_000, 12_000);
+        assert_eq!(cap.profile, SMALL_GREEDY_TRIMMED);
+        assert_eq!(cap.reason, FinalReason::Cap);
+        assert_eq!(cap.timing, WordTiming::Token);
+
+        let backlog = select_final_profile(true, true, false, 1_601, 4_000);
+        assert_eq!(backlog.profile, SMALL_GREEDY_TRIMMED);
+        assert_eq!(backlog.reason, FinalReason::Backlog);
+
+        let long = select_final_profile(true, true, false, 0, 6_001);
+        assert_eq!(long.profile, SMALL_GREEDY_TRIMMED);
+        assert_eq!(long.reason, FinalReason::LongAudio);
+    }
+
+    #[test]
+    fn non_windows_keeps_existing_turbo_beam5_policy() {
+        let turbo = select_final_profile(false, true, false, 9_000, 30_000);
+        assert_eq!(turbo.profile, TURBO_BEAM5_FULL);
+        assert_eq!(turbo.reason, FinalReason::Endpoint);
+
+        let fallback = select_final_profile(false, false, false, 0, 3_000);
+        assert_eq!(fallback.profile, SMALL_GREEDY_TRIMMED);
+    }
+
+    #[test]
+    fn trimmed_context_is_bounded_and_tracks_audio_length() {
+        assert_eq!(trimmed_audio_ctx(0), 512);
+        assert_eq!(trimmed_audio_ctx(5 * TARGET_RATE as usize), 512);
+        assert_eq!(trimmed_audio_ctx(12 * TARGET_RATE as usize), 728);
+        assert_eq!(trimmed_audio_ctx(30 * TARGET_RATE as usize), 1_500);
+    }
+
+    #[test]
+    fn balanced_windows_profile_caps_decode_at_three_threads() {
+        assert_eq!(decode_thread_count(16, true), 3);
+        assert_eq!(decode_thread_count(8, true), 3);
+        assert_eq!(decode_thread_count(4, true), 2);
+        assert_eq!(decode_thread_count(8, false), 6);
+    }
 
     #[test]
     #[ignore]
@@ -584,10 +876,16 @@ mod speed_gate {
             .map(|i| (i as f32 * 0.05).sin() * 0.01)
             .collect();
         let t0 = std::time::Instant::now();
-        let _ = decode(&mut state, &pcm, Some("en"), 4);
+        let threads = decode_thread_count(
+            std::thread::available_parallelism()
+                .map(|n| n.get())
+                .unwrap_or(4),
+            cfg!(windows),
+        );
+        let _ = decode(&mut state, &pcm, Some("en"), threads);
         let rtf = t0.elapsed().as_secs_f32() / SECS as f32;
         eprintln!(
-            "[bench] realtime factor: {rtf:.3} ({}ms for {SECS}s audio)",
+            "[bench] realtime factor: {rtf:.3} ({}ms for {SECS}s audio, {threads} threads)",
             t0.elapsed().as_millis()
         );
         assert!(
@@ -600,6 +898,13 @@ mod speed_gate {
 #[cfg(test)]
 mod ab_tests {
     use super::*;
+
+    #[derive(Clone, Copy, Debug)]
+    enum QualityMode {
+        GreedyTrimmed,
+        GreedyFull,
+        BeamFull(i32),
+    }
 
     fn read_wav_16k_mono(path: &std::path::Path) -> Vec<f32> {
         let bytes = std::fs::read(path).expect("read wav");
@@ -615,10 +920,232 @@ mod ab_tests {
             .collect()
     }
 
+    fn decode_quality_mode(
+        state: &mut whisper_rs::WhisperState,
+        pcm: &[f32],
+        mode: QualityMode,
+        threads: i32,
+        token_timestamps: bool,
+    ) -> String {
+        let strategy = match mode {
+            QualityMode::GreedyTrimmed | QualityMode::GreedyFull => {
+                SamplingStrategy::Greedy { best_of: 1 }
+            }
+            QualityMode::BeamFull(beam_size) => SamplingStrategy::BeamSearch {
+                beam_size,
+                patience: 1.0,
+            },
+        };
+        let mut params = FullParams::new(strategy);
+        params.set_language(Some("pt"));
+        params.set_no_context(true);
+        params.set_single_segment(true);
+        params.set_suppress_blank(true);
+        params.set_suppress_nst(true);
+        params.set_temperature(0.0);
+        params.set_temperature_inc(0.2);
+        params.set_no_timestamps(!token_timestamps);
+        if token_timestamps {
+            params.set_token_timestamps(true);
+        }
+        params.set_print_special(false);
+        params.set_print_progress(false);
+        params.set_print_realtime(false);
+        params.set_print_timestamps(false);
+        params.set_n_threads(threads);
+        match mode {
+            QualityMode::GreedyTrimmed => {
+                let len_s = pcm.len() as f32 / TARGET_RATE as f32;
+                let audio_ctx = ((len_s / 30.0 * 1500.0) as i32 + 128).clamp(512, 1500);
+                params.set_audio_ctx(audio_ctx);
+            }
+            QualityMode::GreedyFull | QualityMode::BeamFull(_) => params.set_audio_ctx(0),
+        }
+        state.full(params, pcm).expect("quality decode");
+        collapse_repeats(&collect_text(state))
+    }
+
+    fn normalize_pt(text: &str) -> Vec<String> {
+        text.to_lowercase()
+            .chars()
+            .map(|c| match c {
+                'á' | 'à' | 'â' | 'ã' | 'ä' => 'a',
+                'é' | 'è' | 'ê' | 'ë' => 'e',
+                'í' | 'ì' | 'î' | 'ï' => 'i',
+                'ó' | 'ò' | 'ô' | 'õ' | 'ö' => 'o',
+                'ú' | 'ù' | 'û' | 'ü' => 'u',
+                'ç' => 'c',
+                c if c.is_alphanumeric() => c,
+                _ => ' ',
+            })
+            .collect::<String>()
+            .split_whitespace()
+            .map(str::to_string)
+            .collect()
+    }
+
+    fn word_errors(expected: &[String], actual: &[String]) -> usize {
+        let mut previous: Vec<usize> = (0..=actual.len()).collect();
+        let mut current = vec![0; actual.len() + 1];
+        for (i, expected_word) in expected.iter().enumerate() {
+            current[0] = i + 1;
+            for (j, actual_word) in actual.iter().enumerate() {
+                current[j + 1] = (previous[j + 1] + 1)
+                    .min(current[j] + 1)
+                    .min(previous[j] + usize::from(expected_word != actual_word));
+            }
+            std::mem::swap(&mut previous, &mut current);
+        }
+        previous[actual.len()]
+    }
+
+    /// Diagnostic A/B for Windows quality decisions. Fixtures named
+    /// `pt01_v1.wav` … `pt10_vN.wav` map to the phrase list below.
+    ///
+    /// CALLOUT_AB_DIR=<fixtures> \
+    /// CALLOUT_SMALL_MODEL=<ggml-small-q5_1.bin> \
+    /// CALLOUT_TURBO_MODEL=<ggml-large-v3-turbo-q5_0.bin> \
+    /// cargo test --release -- --ignored ab_windows_quality --nocapture
+    #[test]
+    #[ignore]
+    fn ab_windows_quality_profiles_portuguese() {
+        let Some(dir) = std::env::var_os("CALLOUT_AB_DIR") else {
+            eprintln!("CALLOUT_AB_DIR not set; skipping");
+            return;
+        };
+        let Ok(small_model) = std::env::var("CALLOUT_SMALL_MODEL") else {
+            eprintln!("CALLOUT_SMALL_MODEL not set; skipping");
+            return;
+        };
+        let Ok(turbo_model) = std::env::var("CALLOUT_TURBO_MODEL") else {
+            eprintln!("CALLOUT_TURBO_MODEL not set; skipping");
+            return;
+        };
+        const EXPECTED: &[&str] = &[
+            "foi mal",
+            "abre a porta",
+            "cuidado pela direita",
+            "não vai pelo meio",
+            "tem dois no B",
+            "ele está atrás de você",
+            "pega minha arma",
+            "vamos rotacionar agora",
+            "são quinze segundos",
+            "não atira ainda",
+        ];
+
+        let mut wavs: Vec<_> = std::fs::read_dir(dir)
+            .expect("fixture dir")
+            .filter_map(|entry| entry.ok().map(|entry| entry.path()))
+            .filter(|path| {
+                path.extension().is_some_and(|ext| ext == "wav")
+                    && path
+                        .file_stem()
+                        .is_some_and(|stem| stem.to_string_lossy().contains("_v"))
+            })
+            .collect();
+        wavs.sort();
+        assert!(!wavs.is_empty(), "no ptNN_vN.wav fixtures found");
+
+        let mut profiles = vec![
+            (
+                "small-greedy-trimmed",
+                small_model.as_str(),
+                QualityMode::GreedyTrimmed,
+                true,
+            ),
+            (
+                "small-beam3-full",
+                small_model.as_str(),
+                QualityMode::BeamFull(3),
+                true,
+            ),
+            (
+                "turbo-greedy-trimmed-ts",
+                turbo_model.as_str(),
+                QualityMode::GreedyTrimmed,
+                true,
+            ),
+            (
+                "turbo-greedy-trimmed-no-ts",
+                turbo_model.as_str(),
+                QualityMode::GreedyTrimmed,
+                false,
+            ),
+        ];
+        if std::env::var("CALLOUT_AB_SLOW").ok().as_deref() == Some("1") {
+            profiles.extend([
+                (
+                    "turbo-greedy-full",
+                    turbo_model.as_str(),
+                    QualityMode::GreedyFull,
+                    true,
+                ),
+                (
+                    "turbo-beam3-full",
+                    turbo_model.as_str(),
+                    QualityMode::BeamFull(3),
+                    true,
+                ),
+                (
+                    "turbo-beam5-full",
+                    turbo_model.as_str(),
+                    QualityMode::BeamFull(5),
+                    true,
+                ),
+            ]);
+        }
+
+        let profile_filter = std::env::var("CALLOUT_AB_PROFILE").ok();
+        for (profile, model, mode, token_timestamps) in profiles {
+            if profile_filter
+                .as_ref()
+                .is_some_and(|filter| !profile.contains(filter))
+            {
+                continue;
+            }
+            let ctx = WhisperContext::new_with_params(model, WhisperContextParameters::default())
+                .expect("load quality model");
+            let mut state = ctx.create_state().expect("quality state");
+            let warmup = read_wav_16k_mono(&wavs[0]);
+            let _ = decode_quality_mode(&mut state, &warmup, mode, 3, token_timestamps);
+
+            let mut errors = 0usize;
+            let mut reference_words = 0usize;
+            let mut decode_ms = 0u128;
+            for wav in &wavs {
+                let stem = wav.file_stem().unwrap().to_string_lossy();
+                let phrase_index: usize = stem[2..4].parse().expect("ptNN fixture name");
+                let expected = EXPECTED[phrase_index - 1];
+                let pcm = read_wav_16k_mono(wav);
+                let started = std::time::Instant::now();
+                let actual = decode_quality_mode(&mut state, &pcm, mode, 3, token_timestamps);
+                let elapsed_ms = started.elapsed().as_millis();
+                let expected_words = normalize_pt(expected);
+                let actual_words = normalize_pt(&actual);
+                let item_errors = word_errors(&expected_words, &actual_words);
+                errors += item_errors;
+                reference_words += expected_words.len();
+                decode_ms += elapsed_ms;
+                if item_errors > 0 || phrase_index == 1 {
+                    eprintln!(
+                        "[quality] {profile} {stem}: {elapsed_ms}ms errors={item_errors} expected={expected:?} actual={actual:?}"
+                    );
+                }
+            }
+            let wer = errors as f32 / reference_words as f32;
+            eprintln!(
+                "[quality-summary] {profile}: WER={wer:.3} errors={errors}/{reference_words} mean_decode_ms={} fixtures={}",
+                decode_ms / wavs.len() as u128,
+                wavs.len()
+            );
+        }
+    }
+
     /// Forensic test for the "fluent but unrelated Portuguese" bug: decodes a
-    /// clean PT fixture through the EXACT production finals path (turbo, beam,
-    /// full context), then the same audio with holes punched in it (simulating
-    /// capture drops under backpressure).
+    /// clean PT fixture through the macOS Turbo/beam5/full-context path, then
+    /// the same audio with holes punched in it (simulating capture drops under
+    /// backpressure).
     ///   CALLOUT_AB_DIR=<fixtures> cargo test --release -- --ignored pt_finals --nocapture
     #[test]
     #[ignore]
@@ -636,7 +1163,16 @@ mod ab_tests {
         let mut state = ctx.create_state().expect("state");
         let pcm = read_wav_16k_mono(&std::path::PathBuf::from(&dir).join("pt1.wav"));
 
-        let (clean, _) = decode_final(&mut state, &pcm, Some("pt"), 4, 0, true).expect("decode");
+        let (clean, _) = decode_final(
+            &mut state,
+            &pcm,
+            Some("pt"),
+            4,
+            0,
+            TURBO_BEAM5_FULL,
+            WordTiming::Token,
+        )
+        .expect("decode");
         eprintln!("[forensics] clean:   {clean:?}");
 
         // Punch holes: drop every other 80ms block — spliced audio, like a
@@ -648,8 +1184,16 @@ mod ab_tests {
             .filter(|(i, _)| i % 2 == 0)
             .flat_map(|(_, c)| c.iter().copied())
             .collect();
-        let (holed, _) =
-            decode_final(&mut state, &chopped, Some("pt"), 4, 0, true).expect("decode");
+        let (holed, _) = decode_final(
+            &mut state,
+            &chopped,
+            Some("pt"),
+            4,
+            0,
+            TURBO_BEAM5_FULL,
+            WordTiming::Token,
+        )
+        .expect("decode");
         eprintln!("[forensics] chopped: {holed:?}");
 
         let clean_lower = clean.to_lowercase();

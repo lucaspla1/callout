@@ -528,14 +528,10 @@ fn spawn_pipeline(app: AppHandle, settings: settings::SettingsHandle) {
                     return;
                 }
             }
-            // Windows runs whisper on CPU (no Metal): the turbo finals model is
-            // ~2 GB of RAM and pegs cores for seconds per final there, so finals
-            // fall back to the small model. Revisit with a GPU backend (Vulkan).
-            let turbo_path = if cfg!(windows) {
-                None
-            } else {
-                Some(data_dir2.join(TURBO_MODEL_FILE))
-            };
+            // Turbo is an optional adaptive Finals model. On Windows the worker
+            // selects it only for short, naturally-ended utterances with no
+            // backlog; live Partials and long/capped Finals stay on Small.
+            let turbo_path = Some(data_dir2.join(TURBO_MODEL_FILE));
             let (feed, mut rx) = stt::spawn_whisper(
                 data_dir2.join(MODEL_FILE),
                 turbo_path,
@@ -635,12 +631,14 @@ fn spawn_pipeline(app: AppHandle, settings: settings::SettingsHandle) {
                 },
                 Some(ev) = stt_rx.recv() => {
                     match ev {
-                        SttEvent::Partial { text, t_start_ms } => {
-                            let line = align::attribute(&log, &roster, &text, false, t_start_ms, now_ms());
+                        SttEvent::Partial { text, t_start_ms, t_end_ms } => {
+                            let line = align::attribute(&log, &roster, &text, false, t_start_ms, t_end_ms);
                             let _ = app.emit("caption", &line);
                         }
                         SttEvent::Final { text, words, pcm, t_start_ms, t_end_ms } => {
-                            eprintln!("[callout] final: {text:?}");
+                            // Transcript text is private user content; keep only
+                            // a structural marker for smoke tests/diagnostics.
+                            eprintln!("[callout] final: received");
                             if voice.is_none() && !voice_load_failed && speaker_model_path.is_file() {
                                 match stt::voiceid::VoiceId::load(&speaker_model_path) {
                                     Ok(v) => {
