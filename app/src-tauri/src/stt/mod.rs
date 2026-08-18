@@ -6,6 +6,7 @@
 
 pub mod fbank;
 mod gate;
+mod mailbox;
 pub mod voiceid;
 #[cfg(any(target_os = "macos", windows))]
 mod whisper_engine;
@@ -30,25 +31,17 @@ pub struct Word {
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum SttEvent {
     /// Provisional text for the utterance in progress; replaces the previous Partial.
-    Partial { text: String, t_start_ms: u64 },
+    Partial {
+        text: String,
+        t_start_ms: u64,
+        t_end_ms: u64,
+    },
     /// Utterance finalized; immutable afterwards. Carries the utterance audio
     /// for voiceprint enrollment/matching (internal only — never serialized).
     Final {
         text: String,
         words: Vec<Word>,
         #[serde(skip)]
-        pcm: Vec<f32>,
-        t_start_ms: u64,
-        t_end_ms: u64,
-    },
-}
-
-/// A decode job produced by the VAD gate for the engine worker.
-pub(crate) enum Job {
-    /// Droppable: skip if the worker is busy.
-    Partial { pcm: Vec<f32>, t_start_ms: u64 },
-    /// Never dropped.
-    Final {
         pcm: Vec<f32>,
         t_start_ms: u64,
         t_end_ms: u64,
@@ -79,13 +72,18 @@ pub fn spawn_whisper(
     status_tx: tokio::sync::mpsc::UnboundedSender<CaptionsStatus>,
 ) -> (SttFeed, mpsc::UnboundedReceiver<SttEvent>) {
     let (event_tx, event_rx) = mpsc::unbounded_channel();
-    let (job_tx, job_rx) = crossbeam_channel::bounded::<Job>(4);
+    let (job_tx, job_rx) = mailbox::job_mailbox();
     whisper_engine::spawn_worker(
-        model_path, turbo_path, languages, job_rx, event_tx, status_tx,
+        model_path,
+        turbo_path,
+        languages,
+        job_rx,
+        event_tx,
+        status_tx.clone(),
     );
     (
         SttFeed {
-            gate: gate::Gate::new(job_tx),
+            gate: gate::Gate::new(job_tx, status_tx),
         },
         event_rx,
     )
@@ -99,13 +97,13 @@ pub fn spawn_whisper(
     status_tx: tokio::sync::mpsc::UnboundedSender<CaptionsStatus>,
 ) -> (SttFeed, mpsc::UnboundedReceiver<SttEvent>) {
     let (_event_tx, event_rx) = mpsc::unbounded_channel();
-    let (job_tx, _job_rx) = crossbeam_channel::bounded::<Job>(4);
+    let (job_tx, _job_rx) = mailbox::job_mailbox();
     let _ = status_tx.send(CaptionsStatus::SttError {
         message: "STT is not implemented on this platform yet".into(),
     });
     (
         SttFeed {
-            gate: gate::Gate::new(job_tx),
+            gate: gate::Gate::new(job_tx, status_tx),
         },
         event_rx,
     )
@@ -136,6 +134,7 @@ impl MockStt {
                         .send(SttEvent::Partial {
                             text: words[..n].join(" "),
                             t_start_ms: t_start,
+                            t_end_ms: now_ms(),
                         })
                         .is_err()
                     {
