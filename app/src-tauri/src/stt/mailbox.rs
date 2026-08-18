@@ -24,6 +24,9 @@ pub(crate) struct FinalJob {
     pub pcm: Vec<f32>,
     pub t_start_ms: u64,
     pub t_end_ms: u64,
+    /// True when the Gate forced a split at the maximum utterance duration,
+    /// rather than observing the normal silence endpoint.
+    pub ended_by_cap: bool,
     pub queued_at: Instant,
 }
 
@@ -220,6 +223,7 @@ mod tests {
             pcm: vec![id as f32; 4],
             t_start_ms: id * 1_000,
             t_end_ms: id * 1_000 + 500,
+            ended_by_cap: false,
             queued_at: Instant::now(),
         }
     }
@@ -358,6 +362,18 @@ mod tests {
             panic!("expected final");
         };
         assert_eq!(job.pcm.as_ptr(), ptr);
+    }
+
+    #[test]
+    fn final_preserves_cap_reason() {
+        let (tx, mut rx) = job_mailbox();
+        let mut job = final_job(1);
+        job.ended_by_cap = true;
+        tx.publish_final(job).unwrap();
+        let DecodeJob::Final(job) = rx.recv_next().unwrap() else {
+            panic!("expected final");
+        };
+        assert!(job.ended_by_cap);
     }
 
     #[test]

@@ -28,6 +28,10 @@ fn partial_tail_samples(windows: bool) -> Option<usize> {
     windows.then_some(WINDOWS_PARTIAL_TAIL_S * TARGET_RATE as usize)
 }
 
+fn is_cap_endpoint(silence_ms: u32, endpoint_silence_ms: u32) -> bool {
+    silence_ms < endpoint_silence_ms
+}
+
 /// Copy only the audio the Partial decoder will consume. Keeping the windowing
 /// on the capture side avoids cloning an entire growing utterance every tick.
 fn copy_partial_window(
@@ -198,6 +202,10 @@ impl Gate {
                     || utt_ms as f32 / 1000.0 >= self.cfg.max_utterance_s;
 
                 if endpoint {
+                    // If both conditions become true on the same frame, prefer
+                    // the natural silence endpoint: it is safe to spend more
+                    // decode work after the speaker has actually stopped.
+                    let ended_by_cap = is_cap_endpoint(*silence_ms, self.cfg.endpoint_silence_ms);
                     let speech_ms = utt_ms.saturating_sub(*silence_ms as u64);
                     if speech_ms >= self.cfg.min_speech_ms as u64 {
                         // "cap" endings chop speech mid-word — in the field log
@@ -213,6 +221,7 @@ impl Gate {
                                 pcm,
                                 t_start_ms: self.utt_start_ms,
                                 t_end_ms,
+                                ended_by_cap,
                                 queued_at: Instant::now(),
                             })
                             .is_err()
@@ -221,10 +230,10 @@ impl Gate {
                         }
                         crate::diag::log(&format!(
                             "utterance: duration_ms={utt_ms} ended_by={} partials_replaced={} final_queue_depth={}",
-                            if *silence_ms >= self.cfg.endpoint_silence_ms {
-                                "endpoint"
-                            } else {
+                            if ended_by_cap {
                                 "cap"
+                            } else {
+                                "endpoint"
                             },
                             self.partial_replacements,
                             self.job_tx.final_depth()
@@ -278,6 +287,13 @@ mod tests {
         assert_eq!(partial_tail_samples(true), Some(96_000));
         assert_eq!(partial_every_ms(false), 600);
         assert_eq!(partial_tail_samples(false), None);
+    }
+
+    #[test]
+    fn silence_at_threshold_wins_over_duration_cap() {
+        assert!(!is_cap_endpoint(400, 400));
+        assert!(!is_cap_endpoint(432, 400));
+        assert!(is_cap_endpoint(399, 400));
     }
 
     #[test]

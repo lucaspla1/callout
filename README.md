@@ -62,7 +62,7 @@ research/          Phase-1 market & technology research
 
 ## Privacy & Legal
 
-Everything runs on your machine: Unmute hears only Discord's audio (never your mic or game), transcribes it locally, and discards it — no cloud, no accounts, no telemetry. First run downloads the speech models straight from their publishers (Hugging Face / GitHub): ~220 MB on Windows, ~790 MB on macOS. Full details:
+Everything runs on your machine: Unmute hears only Discord's audio (never your mic or game), transcribes it locally, and discards it — no cloud, no accounts, no telemetry. First run downloads up to ~790 MB of speech and speaker models straight from their publishers (Hugging Face / GitHub). If the optional high-quality model is unavailable, captions fall back to the smaller local model. Full details:
 
 - [PRIVACY.md](PRIVACY.md) — what's processed, what's stored where, every network endpoint, how to wipe it all
 - [NOTICE.md](NOTICE.md) — third-party model & library licenses and attribution

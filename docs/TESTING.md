@@ -8,7 +8,8 @@ This guide gets you from zero to captions. It's honest about the rough edges: bu
 
 - **Windows 10 (version 2004) or newer**, or **macOS 14.4 (Sonoma) or newer**. These floors are real: the per-app audio capture Unmute uses didn't exist in the OS before them.
 - **The Discord desktop app**, installed and logged in. Discord in a browser won't work — Unmute talks to the desktop client on your machine (the same local interface Discord's own StreamKit overlay uses).
-- **Internet on first launch** — Unmute downloads its speech-recognition models once (~220 MB on Windows, ~790 MB on macOS).
+- **Internet on first launch** — Unmute downloads up to ~790 MB of speech and speaker models once. If the optional high-quality model cannot be downloaded, captions still start with the smaller local model.
+- **About 1.2 GB of working memory for speech recognition** when the optional quality model is loaded (roughly 370 MB with the smaller-model fallback). This is an experimental quality/CPU tradeoff we are measuring on Windows hardware.
 - A download link for the build. Grab it from [Releases](https://github.com/lucaspla1/unmute/releases) if one is published; otherwise Lucas will send you the build directly.
 
 ## Step 1 — Get access to connect (one-time)

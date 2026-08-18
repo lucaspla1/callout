@@ -10,7 +10,7 @@ Only the Discord desktop app's audio output — the voices in your voice channel
 
 | Endpoint | When | Why |
 |---|---|---|
-| `huggingface.co` | First run | Downloads the Whisper speech model(s): ~190 MB on Windows, ~765 MB on macOS (which adds a larger model for higher-quality finals) |
+| `huggingface.co` | First run | Downloads up to ~765 MB of Whisper speech models on Windows or macOS. The larger high-quality model is optional; if it is unavailable, Unmute uses the smaller local model. |
 | `github.com` | First run | Downloads the speaker-identification model (~26 MB, from the sherpa-onnx releases) |
 | `discord.com` (`/api/oauth2/token`) | Sign-in and token refresh | Standard Discord OAuth token exchange (PKCE — no app secret involved) |
 | `cdn.discordapp.com` | While in a channel | Fetches avatars of channel members, only when your speaker-label setting shows avatars |

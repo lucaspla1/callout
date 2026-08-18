@@ -19,6 +19,9 @@ pub struct ModelSpec {
     pub approx_bytes: u64,
     /// Pinned SHA-256 of the finished file (lowercase hex).
     pub sha256: &'static str,
+    /// Optional quality models may fail without blocking the core captions
+    /// pipeline; the runtime must provide a tested fallback.
+    pub required: bool,
 }
 
 pub const MODELS: &[ModelSpec] = &[
@@ -28,6 +31,7 @@ pub const MODELS: &[ModelSpec] = &[
         url: "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-small-q5_1.bin",
         approx_bytes: 190_085_487,
         sha256: "ae85e4a935d7a567bd102fe55afc16bb595bdb618e11b2fc7591bc08120411bb",
+        required: true,
     },
     ModelSpec {
         id: "whisper-large-v3-turbo-q5_0",
@@ -35,6 +39,7 @@ pub const MODELS: &[ModelSpec] = &[
         url: "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-large-v3-turbo-q5_0.bin",
         approx_bytes: 574_041_195,
         sha256: "394221709cd5ad1f40c46e6031ca61bce88931e6e088c188294c6d5a55ffa7e2",
+        required: false,
     },
     ModelSpec {
         id: "speaker-wespeaker-resnet34",
@@ -43,6 +48,7 @@ pub const MODELS: &[ModelSpec] = &[
         url: "https://github.com/k2-fsa/sherpa-onnx/releases/download/speaker-recongition-models/wespeaker_en_voxceleb_resnet34_LM.onnx",
         approx_bytes: 26_000_000,
         sha256: "e9848563da86f263117134dfd7ad63c92355b37de492b55e325400c9d9c39012",
+        required: true,
     },
 ];
 
@@ -55,12 +61,11 @@ pub enum ModelDl {
     AllReady,
 }
 
-/// Models this platform actually uses. Windows decodes on CPU and skips the
-/// turbo finals model (see spawn_pipeline) — don't make users download it.
+/// Models used by the adaptive STT profile. Windows keeps Turbo available only
+/// for short, naturally-ended Finals; live Partials and long/backlogged Finals
+/// remain on Small so the larger model is never on the continuous hot path.
 fn active() -> impl Iterator<Item = &'static ModelSpec> {
-    MODELS
-        .iter()
-        .filter(|m| cfg!(not(windows)) || m.id != "whisper-large-v3-turbo-q5_0")
+    MODELS.iter()
 }
 
 pub fn missing(data_dir: &Path) -> Vec<&'static ModelSpec> {
@@ -80,18 +85,24 @@ pub async fn ensure_all(
         if dest.is_file() {
             continue;
         }
-        download_with_retries(spec, &dest, &emit)
-            .await
-            .map_err(|e| {
+        match download_with_retries(spec, &dest, &emit).await {
+            Ok(()) => emit(ModelDl::Done {
+                id: spec.id.to_string(),
+            }),
+            Err(message) => {
                 emit(ModelDl::Failed {
                     id: spec.id.to_string(),
-                    message: e.clone(),
+                    message: message.clone(),
                 });
-                e
-            })?;
-        emit(ModelDl::Done {
-            id: spec.id.to_string(),
-        });
+                if spec.required {
+                    return Err(message);
+                }
+                eprintln!(
+                    "[models] optional model {} unavailable; continuing with fallback: {message}",
+                    spec.id
+                );
+            }
+        }
     }
     emit(ModelDl::AllReady);
     Ok(())
@@ -220,5 +231,18 @@ mod tests {
         std::fs::write(&p, b"stub").unwrap();
         assert_eq!(missing(&dir).len(), active_models.len() - 1);
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn turbo_quality_model_is_optional_but_core_models_are_required() {
+        let turbo = MODELS
+            .iter()
+            .find(|model| model.id == "whisper-large-v3-turbo-q5_0")
+            .unwrap();
+        assert!(!turbo.required);
+        assert!(MODELS
+            .iter()
+            .filter(|model| model.id != turbo.id)
+            .all(|model| model.required));
     }
 }
