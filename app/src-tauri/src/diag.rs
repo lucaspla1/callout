@@ -1,5 +1,5 @@
 //! Structural diagnostics for field troubleshooting: capture health, decode
-//! timings, utterance boundaries. Written to stderr AND a log file in the app
+//! timings, utterance boundaries, and local hardware/backend metadata. Written to stderr AND a log file in the app
 //! data dir, so "send me the file" replaces terminal gymnastics.
 //! PRIVACY: never log transcript text, names, or ids here — numbers only.
 

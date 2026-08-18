@@ -118,7 +118,7 @@ File bugs at <https://github.com/lucaspla1/unmute/issues>. The perfect report ha
    - **Windows:** `%APPDATA%\app.callout.desktop\unmute-diag.log`
    - **macOS:** `~/Library/Application Support/app.callout.desktop/unmute-diag.log`
 
-The diag log contains **timings and health numbers only — never transcript text, names, or IDs**, so it's safe to attach publicly. One catch: it's wiped each time Unmute starts, so **copy it right after the problem happens**, before relaunching.
+The diag log contains **timings, health numbers, and speech-backend/device metadata only — never transcript text, Discord names, or IDs**, so it's safe to attach publicly. One catch: it's wiped each time Unmute starts, so **copy it right after the problem happens**, before relaunching.
 
 ## Privacy, in one line
 

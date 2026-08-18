@@ -2,8 +2,11 @@
 //! Turbo finals context, and VAD-cut utterances in → Partial/Final text out.
 //! Decode parameters follow docs/dev/stt-engine.md §3.3.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, RwLock};
+
+#[cfg(all(target_os = "windows", feature = "windows-vulkan"))]
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use whisper_rs::{FullParams, SamplingStrategy, WhisperContext, WhisperContextParameters};
 
@@ -12,6 +15,59 @@ use super::{SttEvent, Word};
 use crate::capture::TARGET_RATE;
 use crate::settings::Settings;
 use crate::CaptionsStatus;
+
+#[cfg(all(target_os = "windows", feature = "windows-vulkan"))]
+static VULKAN_BACKEND_CONFIRMED: AtomicBool = AtomicBool::new(false);
+
+#[cfg(all(target_os = "windows", feature = "windows-vulkan"))]
+struct WhisperNativeLogger;
+
+#[cfg(all(target_os = "windows", feature = "windows-vulkan"))]
+impl log::Log for WhisperNativeLogger {
+    fn enabled(&self, metadata: &log::Metadata<'_>) -> bool {
+        metadata.level() <= log::Level::Info
+    }
+
+    fn log(&self, record: &log::Record<'_>) {
+        if !self.enabled(record.metadata()) {
+            return;
+        }
+        let message = record.args().to_string();
+        if message.contains("using Vulkan") && message.contains(" backend") {
+            // whisper.cpp prints this immediately before initialization. Keep
+            // it as a candidate until a possible synchronous failure log has
+            // had a chance to clear it and context creation returns.
+            VULKAN_BACKEND_CONFIRMED.store(true, Ordering::Release);
+        } else if message.contains("failed to initialize Vulkan") && message.contains(" backend") {
+            VULKAN_BACKEND_CONFIRMED.store(false, Ordering::Release);
+            crate::diag::log("native backend confirmation: cpu (Vulkan init failed)");
+        } else if message.contains("no GPU found") {
+            VULKAN_BACKEND_CONFIRMED.store(false, Ordering::Release);
+            crate::diag::log("native backend confirmation: cpu (no GPU found)");
+        }
+    }
+
+    fn flush(&self) {}
+}
+
+#[cfg(all(target_os = "windows", feature = "windows-vulkan"))]
+static WHISPER_NATIVE_LOGGER: WhisperNativeLogger = WhisperNativeLogger;
+
+#[cfg(all(target_os = "windows", feature = "windows-vulkan"))]
+fn install_whisper_logging() {
+    VULKAN_BACKEND_CONFIRMED.store(false, Ordering::Release);
+    if log::set_logger(&WHISPER_NATIVE_LOGGER).is_ok() {
+        log::set_max_level(log::LevelFilter::Info);
+    } else {
+        crate::diag::log("native backend confirmation unavailable: logger already installed");
+    }
+    whisper_rs::install_logging_hooks();
+}
+
+#[cfg(not(all(target_os = "windows", feature = "windows-vulkan")))]
+fn install_whisper_logging() {
+    whisper_rs::install_logging_hooks();
+}
 
 /// whisper misbehaves on very short inputs; pad to at least ~1.1 s.
 const MIN_SAMPLES: usize = (TARGET_RATE as usize * 11) / 10;
@@ -318,6 +374,140 @@ fn decode_thread_count(available: usize, windows: bool) -> i32 {
     available.saturating_sub(2).clamp(2, max_threads) as i32
 }
 
+#[derive(Debug, Clone)]
+struct BackendChoice {
+    label: &'static str,
+    use_gpu: bool,
+    gpu_device: i32,
+    vram_mb: usize,
+}
+
+impl BackendChoice {
+    const fn cpu() -> Self {
+        Self {
+            label: "cpu",
+            use_gpu: false,
+            gpu_device: 0,
+            vram_mb: 0,
+        }
+    }
+
+    fn context_params(&self) -> WhisperContextParameters<'static> {
+        let mut params = WhisperContextParameters::default();
+        params.use_gpu(self.use_gpu).gpu_device(self.gpu_device);
+        params
+    }
+}
+
+#[cfg(all(target_os = "windows", feature = "windows-vulkan"))]
+fn preferred_backend() -> BackendChoice {
+    if std::env::var_os("UNMUTE_FORCE_CPU").is_some() {
+        eprintln!("[stt] UNMUTE_FORCE_CPU set; Vulkan disabled for this run");
+        return BackendChoice::cpu();
+    }
+
+    let devices = whisper_rs::vulkan::list_devices();
+    for device in &devices {
+        eprintln!(
+            "[stt] Vulkan device {}: {} ({} MiB total, {} MiB free)",
+            device.id,
+            device.name,
+            device.vram.total / (1024 * 1024),
+            device.vram.free / (1024 * 1024),
+        );
+    }
+
+    // ggml orders discrete adapters before integrated ones. Do not rank by
+    // reported memory: an iGPU's shared system heap can appear larger than a
+    // real dGPU's VRAM and silently invalidate the gaming-PC A/B.
+    devices
+        .into_iter()
+        .next()
+        .map(|device| {
+            let device_name = device.name.trim().replace(['\r', '\n'], " ");
+            crate::diag::log(&format!(
+                "vulkan adapter: device={} vram_mb={} name={device_name}",
+                device.id,
+                device.vram.total / (1024 * 1024),
+            ));
+            BackendChoice {
+                label: "vulkan",
+                use_gpu: true,
+                gpu_device: device.id,
+                vram_mb: device.vram.total / (1024 * 1024),
+            }
+        })
+        .unwrap_or_else(|| {
+            eprintln!("[stt] no Vulkan device found; using CPU fallback");
+            BackendChoice::cpu()
+        })
+}
+
+#[cfg(all(target_os = "windows", not(feature = "windows-vulkan")))]
+fn preferred_backend() -> BackendChoice {
+    BackendChoice::cpu()
+}
+
+#[cfg(target_os = "macos")]
+fn preferred_backend() -> BackendChoice {
+    BackendChoice {
+        label: "metal",
+        use_gpu: true,
+        gpu_device: 0,
+        vram_mb: 0,
+    }
+}
+
+#[cfg(not(any(target_os = "windows", target_os = "macos")))]
+fn preferred_backend() -> BackendChoice {
+    BackendChoice::cpu()
+}
+
+#[cfg(all(target_os = "windows", feature = "windows-vulkan"))]
+fn confirmed_backend(requested: &BackendChoice, loaded: BackendChoice) -> BackendChoice {
+    if requested.use_gpu && loaded.use_gpu {
+        if VULKAN_BACKEND_CONFIRMED.load(Ordering::Acquire) {
+            crate::diag::log("native backend confirmation: vulkan");
+            loaded
+        } else {
+            eprintln!(
+                "[stt] Vulkan device was enumerated but whisper.cpp did not confirm the backend; treating the active context as CPU"
+            );
+            BackendChoice::cpu()
+        }
+    } else {
+        loaded
+    }
+}
+
+#[cfg(not(all(target_os = "windows", feature = "windows-vulkan")))]
+fn confirmed_backend(_requested: &BackendChoice, loaded: BackendChoice) -> BackendChoice {
+    loaded
+}
+
+#[cfg(all(target_os = "windows", feature = "windows-vulkan"))]
+fn begin_backend_probe(backend: &BackendChoice) {
+    if backend.use_gpu {
+        VULKAN_BACKEND_CONFIRMED.store(false, Ordering::Release);
+    }
+}
+
+#[cfg(not(all(target_os = "windows", feature = "windows-vulkan")))]
+fn begin_backend_probe(_backend: &BackendChoice) {}
+
+fn load_model(
+    path: &Path,
+    backend: &BackendChoice,
+) -> Result<(WhisperContext, whisper_rs::WhisperState), String> {
+    begin_backend_probe(backend);
+    let context = WhisperContext::new_with_params(path, backend.context_params())
+        .map_err(|error| format!("context: {error}"))?;
+    let state = context
+        .create_state()
+        .map_err(|error| format!("state: {error}"))?;
+    Ok((context, state))
+}
+
 pub fn spawn_worker(
     model_path: PathBuf,
     turbo_path: Option<PathBuf>,
@@ -330,40 +520,62 @@ pub fn spawn_worker(
         .name("callout-whisper".into())
         .spawn(move || {
             let _ = status_tx.send(CaptionsStatus::LoadingModel);
-            whisper_rs::install_logging_hooks();
-            let ctx = match WhisperContext::new_with_params(
+            install_whisper_logging();
+            let requested_backend = preferred_backend();
+            let (_ctx, mut state, loaded_backend) = match load_model(
                 &model_path,
-                WhisperContextParameters::default(),
+                &requested_backend,
             ) {
-                Ok(c) => c,
-                Err(e) => {
+                Ok((context, state)) => (context, state, requested_backend.clone()),
+                Err(gpu_error) if requested_backend.use_gpu => {
+                    eprintln!(
+                        "[stt] {} model load failed ({gpu_error}); retrying on CPU",
+                        requested_backend.label
+                    );
+                    let cpu = BackendChoice::cpu();
+                    match load_model(&model_path, &cpu) {
+                        Ok((context, state)) => (context, state, cpu),
+                        Err(cpu_error) => {
+                            let _ = status_tx.send(CaptionsStatus::SttError {
+                                message: format!(
+                                    "failed to load whisper model on {} ({gpu_error}) and CPU ({cpu_error})",
+                                    requested_backend.label
+                                ),
+                            });
+                            return;
+                        }
+                    }
+                }
+                Err(error) => {
                     let _ = status_tx.send(CaptionsStatus::SttError {
-                        message: format!("failed to load whisper model: {e}"),
+                        message: format!("failed to load whisper model: {error}"),
                     });
                     return;
                 }
             };
-            let mut state = match ctx.create_state() {
-                Ok(s) => s,
-                Err(e) => {
-                    let _ = status_tx.send(CaptionsStatus::SttError {
-                        message: format!("failed to create whisper state: {e}"),
-                    });
-                    return;
-                }
-            };
+            let active_backend = confirmed_backend(&requested_backend, loaded_backend);
+            crate::diag::log(&format!(
+                "stt backend: requested={} active={} gpu_device={} gpu_vram_mb={}",
+                requested_backend.label,
+                active_backend.label,
+                active_backend.gpu_device,
+                active_backend.vram_mb,
+            ));
             // Optional second context for high-quality finals. Model choice,
             // search strategy, and encoder context are selected independently
             // per Final below; partials always remain on the small model.
             let turbo = turbo_path.filter(|p| p.is_file()).and_then(|p| {
                 let t0 = std::time::Instant::now();
-                match WhisperContext::new_with_params(&p, WhisperContextParameters::default())
-                    .and_then(|c| {
-                        // Keep the context alive alongside its state.
-                        let s = c.create_state()?;
-                        Ok((c, s))
-                    }) {
+                match load_model(&p, &active_backend) {
                     Ok(pair) => {
+                        let confirmed =
+                            confirmed_backend(&active_backend, active_backend.clone());
+                        if active_backend.use_gpu && !confirmed.use_gpu {
+                            eprintln!(
+                                "[stt] finals model did not initialize Vulkan; using small for finals"
+                            );
+                            return None;
+                        }
                         eprintln!("[stt] finals model loaded in {:?}", t0.elapsed());
                         Some(pair)
                     }
@@ -389,7 +601,8 @@ pub fn spawn_worker(
                 .unwrap_or(4);
             let threads = decode_thread_count(available_threads, cfg!(windows));
             crate::diag::log(&format!(
-                "stt profile: decode_threads={threads} available_threads={available_threads} partial_model=small partial_search=greedy partial_context=trimmed partial_cadence_ms={} partial_tail_s={}",
+                "stt profile: backend={} decode_threads={threads} available_threads={available_threads} partial_model=small partial_search=greedy partial_context=trimmed partial_cadence_ms={} partial_tail_s={}",
+                active_backend.label,
                 if cfg!(windows) { 1_600 } else { 600 },
                 if cfg!(windows) { 6 } else { 0 }
             ));

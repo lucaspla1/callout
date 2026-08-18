@@ -1,10 +1,15 @@
 [package]
 name = "callout"
-version = "0.1.2"
+version = "0.1.3"
 description = "Live captions for Discord voice chat, in an in-game overlay"
 authors = ["Lucas Pitchon and contributors"]
 license = "MIT"
 edition = "2021"
+
+[features]
+# Kept opt-in so the CPU build remains an exact baseline. The dedicated
+# Windows workflow enables this feature for the AMD/NVIDIA/Intel Vulkan A/B.
+windows-vulkan = ["dep:log", "whisper-rs/log_backend", "whisper-rs/vulkan"]
 
 [lib]
 name = "callout_lib"
@@ -34,6 +39,7 @@ ort = "=2.0.0-rc.10"
 ndarray = "0.16"
 rustfft = "6"
 libc = "0.2.189"
+log = { version = "0.4", optional = true }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 cidre = "0.20.0"
