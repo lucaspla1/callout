@@ -7,7 +7,8 @@ use std::sync::{Arc, RwLock};
 
 use whisper_rs::{FullParams, SamplingStrategy, WhisperContext, WhisperContextParameters};
 
-use super::{Job, SttEvent, Word};
+use super::mailbox::{DecodeJob, JobMailboxRx};
+use super::{SttEvent, Word};
 use crate::capture::TARGET_RATE;
 use crate::settings::Settings;
 use crate::CaptionsStatus;
@@ -126,11 +127,19 @@ fn write_wav_16k_mono(path: &std::path::Path, pcm: &[f32]) {
     let _ = std::fs::write(path, out);
 }
 
+fn decode_thread_count(available: usize, windows: bool) -> i32 {
+    // Leave more headroom on Windows for Discord and the game. Three worker
+    // threads is the balanced profile: two risks falling behind, while four
+    // leaves too little CPU headroom during continuous speech.
+    let max_threads = if windows { 3 } else { 6 };
+    available.saturating_sub(2).clamp(2, max_threads) as i32
+}
+
 pub fn spawn_worker(
     model_path: PathBuf,
     turbo_path: Option<PathBuf>,
     settings: Arc<RwLock<Settings>>,
-    job_rx: crossbeam_channel::Receiver<Job>,
+    mut job_rx: JobMailboxRx,
     event_tx: tokio::sync::mpsc::UnboundedSender<SttEvent>,
     status_tx: tokio::sync::mpsc::UnboundedSender<CaptionsStatus>,
 ) {
@@ -189,69 +198,73 @@ pub fn spawn_worker(
             );
             let _ = status_tx.send(CaptionsStatus::SttReady);
 
-            // Cap lower on Windows: whisper shares the CPU with the game there
-            // (macOS decodes on Metal, so its threads are cheap).
-            let max_threads = if cfg!(windows) { 4 } else { 6 };
-            let threads = std::thread::available_parallelism()
-                .map(|n| n.get().saturating_sub(2).clamp(2, max_threads))
-                .unwrap_or(4) as i32;
+            let available_threads = std::thread::available_parallelism()
+                .map(|n| n.get())
+                .unwrap_or(4);
+            let threads = decode_thread_count(available_threads, cfg!(windows));
+            crate::diag::log(&format!(
+                "stt profile: decode_threads={threads} available_threads={available_threads} partial_cadence_ms={} partial_tail_s={}",
+                if cfg!(windows) { 1_600 } else { 600 },
+                if cfg!(windows) { 6 } else { 0 }
+            ));
             let mut last_final = String::new();
             // Language is decided once per utterance and cached for its partials.
             let mut utt_key: u64 = u64::MAX;
             let mut utt_lang: Option<String> = None;
 
-            while let Ok(mut job) = job_rx.recv() {
-                // Coalesce a backlog: prefer the newest job; never skip a Final.
-                while let Ok(newer) = job_rx.try_recv() {
-                    job = match (job, newer) {
-                        (Job::Final { .. } | Job::Partial { .. }, f @ Job::Final { .. }) => f,
-                        (f @ Job::Final { .. }, Job::Partial { .. }) => f,
-                        (Job::Partial { .. }, p @ Job::Partial { .. }) => p,
-                    };
-                }
-                let (pcm, t_start_ms) = match &job {
-                    Job::Partial { pcm, t_start_ms } | Job::Final { pcm, t_start_ms, .. } => {
-                        (pcm.clone(), *t_start_ms)
+            while let Ok(job) = job_rx.recv_next() {
+                let (utterance_id, queue_ms) = match &job {
+                    DecodeJob::Partial(job) => {
+                        (job.utterance_id, job.queued_at.elapsed().as_millis())
+                    }
+                    DecodeJob::Final(job) => {
+                        (job.utterance_id, job.queued_at.elapsed().as_millis())
                     }
                 };
-                if t_start_ms != utt_key {
-                    utt_key = t_start_ms;
-                    let allowed = settings.read().map(|s| s.languages.clone()).unwrap_or_default();
-                    utt_lang = choose_language(&mut state, &pcm, &allowed, threads);
+                let new_utterance = utterance_id != utt_key;
+                if new_utterance {
+                    utt_key = utterance_id;
+                    utt_lang = None;
                 }
                 match job {
-                    Job::Partial { pcm, t_start_ms } => {
-                        // CPU decode (Windows): a partial re-decodes the whole
-                        // utterance, so long monologues fall behind realtime.
-                        // Decode only the trailing window there — the final
-                        // still gets the full utterance.
-                        let pcm: &[f32] = if cfg!(windows) {
-                            const TAIL: usize = 6 * TARGET_RATE as usize;
-                            &pcm[pcm.len().saturating_sub(TAIL)..]
-                        } else {
-                            &pcm
-                        };
+                    DecodeJob::Partial(job) => {
+                        if new_utterance {
+                            let allowed = settings
+                                .read()
+                                .map(|s| s.languages.clone())
+                                .unwrap_or_default();
+                            utt_lang =
+                                choose_language(&mut state, &job.pcm, &allowed, threads);
+                        }
+                        let audio_ms =
+                            job.pcm.len() as u64 * 1_000 / TARGET_RATE as u64;
                         let p_t0 = std::time::Instant::now();
-                        if let Some(text) = decode(&mut state, pcm, utt_lang.as_deref(), threads) {
-                            let p_ms = p_t0.elapsed().as_millis();
-                            // A partial slower than its cadence means decode is
-                            // behind realtime — the #1 field question on CPU.
-                            if p_ms > 900 {
-                                crate::diag::log(&format!(
-                                    "slow partial: {p_ms}ms for {}ms audio",
-                                    pcm.len() as u64 * 1000 / TARGET_RATE as u64
-                                ));
-                            }
+                        let decoded =
+                            decode(&mut state, &job.pcm, utt_lang.as_deref(), threads);
+                        let decode_ms = p_t0.elapsed().as_millis();
+                        crate::diag::log(&format!(
+                            "partial decode: queue_ms={queue_ms} decode_ms={decode_ms} audio_ms={audio_ms} utterance_span_ms={} threads={threads} window_offset_ms={}",
+                            job.pcm_end_ms.saturating_sub(job.utterance_start_ms),
+                            job.pcm_start_ms.saturating_sub(job.utterance_start_ms),
+                        ));
+                        if let Some(text) = decoded {
                             let stats = collect_stats(&state);
                             if !text.is_empty()
                                 && !is_known_hallucination(&text)
                                 && stats.mean_p >= 0.4
                             {
-                                let _ = event_tx.send(SttEvent::Partial { text, t_start_ms });
+                                let _ = event_tx.send(SttEvent::Partial {
+                                    text,
+                                    t_start_ms: job.pcm_start_ms,
+                                    t_end_ms: job.pcm_end_ms,
+                                });
                             }
                         }
                     }
-                    Job::Final { pcm, t_start_ms, t_end_ms } => {
+                    DecodeJob::Final(job) => {
+                        let pcm = job.pcm;
+                        let t_start_ms = job.t_start_ms;
+                        let t_end_ms = job.t_end_ms;
                         if let Some(dir) = debug_audio_dir(&model_path) {
                             write_wav_16k_mono(&dir.join(format!("utt_{t_start_ms}.wav")), &pcm);
                         }
@@ -266,9 +279,10 @@ pub fn spawn_worker(
                         };
                         let allowed =
                             settings.read().map(|s| s.languages.clone()).unwrap_or_default();
-                        if allowed.len() > 1 {
-                            utt_lang = choose_language(fin_state, &pcm, &allowed, threads);
-                        }
+                        // A Final may be the utterance's first job. Pick once
+                        // from its full audio; for several allowed languages,
+                        // this also deliberately refreshes a Partial's guess.
+                        utt_lang = choose_language(fin_state, &pcm, &allowed, threads);
                         // Finals also collect word timings (proven not to change
                         // the text — see ab_tests below) for per-word attribution.
                         if let Some((text, words)) = decode_final(
@@ -283,15 +297,15 @@ pub fn spawn_worker(
                             // previous final, a known noise hallucination, or a
                             // low-confidence decode (probability gates).
                             let stats = collect_stats(fin_state);
+                            let decode_ms = decode_t0.elapsed().as_millis();
+                            let audio_ms = pcm.len() as u64 * 1_000 / TARGET_RATE as u64;
                             crate::diag::log(&format!(
-                                "final decode: {}ms ({}, {:.1}s audio)",
-                                decode_t0.elapsed().as_millis(),
+                                "final decode: queue_ms={queue_ms} decode_ms={decode_ms} audio_ms={audio_ms} threads={threads} model={}",
                                 if beam { "turbo" } else { "small" },
-                                pcm.len() as f32 / TARGET_RATE as f32
                             ));
                             if is_low_confidence(&stats) {
                                 eprintln!(
-                                    "[stt] gated final (mean_p={:.2} no_speech={:.2} logprob={:.2}): {text:?}",
+                                    "[stt] gated final (mean_p={:.2} no_speech={:.2} logprob={:.2})",
                                     stats.mean_p, stats.no_speech_prob, stats.avg_logprob
                                 );
                             } else if !text.is_empty()
@@ -570,6 +584,14 @@ mod speed_gate {
     use whisper_rs::{WhisperContext, WhisperContextParameters};
 
     #[test]
+    fn balanced_windows_profile_caps_decode_at_three_threads() {
+        assert_eq!(decode_thread_count(16, true), 3);
+        assert_eq!(decode_thread_count(8, true), 3);
+        assert_eq!(decode_thread_count(4, true), 2);
+        assert_eq!(decode_thread_count(8, false), 6);
+    }
+
+    #[test]
     #[ignore]
     fn small_model_decodes_faster_than_realtime() {
         let Ok(model) = std::env::var("CALLOUT_BENCH_MODEL") else {
@@ -584,10 +606,16 @@ mod speed_gate {
             .map(|i| (i as f32 * 0.05).sin() * 0.01)
             .collect();
         let t0 = std::time::Instant::now();
-        let _ = decode(&mut state, &pcm, Some("en"), 4);
+        let threads = decode_thread_count(
+            std::thread::available_parallelism()
+                .map(|n| n.get())
+                .unwrap_or(4),
+            cfg!(windows),
+        );
+        let _ = decode(&mut state, &pcm, Some("en"), threads);
         let rtf = t0.elapsed().as_secs_f32() / SECS as f32;
         eprintln!(
-            "[bench] realtime factor: {rtf:.3} ({}ms for {SECS}s audio)",
+            "[bench] realtime factor: {rtf:.3} ({}ms for {SECS}s audio, {threads} threads)",
             t0.elapsed().as_millis()
         );
         assert!(

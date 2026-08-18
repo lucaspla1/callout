@@ -635,12 +635,14 @@ fn spawn_pipeline(app: AppHandle, settings: settings::SettingsHandle) {
                 },
                 Some(ev) = stt_rx.recv() => {
                     match ev {
-                        SttEvent::Partial { text, t_start_ms } => {
-                            let line = align::attribute(&log, &roster, &text, false, t_start_ms, now_ms());
+                        SttEvent::Partial { text, t_start_ms, t_end_ms } => {
+                            let line = align::attribute(&log, &roster, &text, false, t_start_ms, t_end_ms);
                             let _ = app.emit("caption", &line);
                         }
                         SttEvent::Final { text, words, pcm, t_start_ms, t_end_ms } => {
-                            eprintln!("[callout] final: {text:?}");
+                            // Transcript text is private user content; keep only
+                            // a structural marker for smoke tests/diagnostics.
+                            eprintln!("[callout] final: received");
                             if voice.is_none() && !voice_load_failed && speaker_model_path.is_file() {
                                 match stt::voiceid::VoiceId::load(&speaker_model_path) {
                                     Ok(v) => {
