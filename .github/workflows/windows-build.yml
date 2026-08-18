@@ -1,15 +1,14 @@
-# Experimental Windows build for measuring whisper.cpp on a real gaming GPU.
-# This disposable definition exists only long enough to dispatch the Vulkan
-# spike from a workflow filename already known on the default branch. Restore
-# the production workflow before opening or merging any PR. The CPU baseline
-# is the immutable 0.1.2 artifact built from commit 4cb22e2.
-name: Windows Vulkan experiment
+# Builds the Windows NSIS installer on a hosted runner — we have no Windows
+# hardware; this is the project's only Windows build path for now.
+name: Windows build
 
 on:
   workflow_dispatch:
+  push:
+    tags: ['v*']
 
 jobs:
-  windows-vulkan-installer:
+  windows-installer:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
@@ -17,29 +16,44 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: app/src-tauri
-          prefix-key: v2-vulkan-1.4.350-clang
+          # Cargo does NOT rebuild cmake-built C deps when only CC/CXX env
+          # changes — a warm cache shipped an MSVC-built (scalar, 15x slow)
+          # whisper straight through the "clang fix". Bump this key whenever
+          # the C toolchain setup changes.
+          prefix-key: v1-clang
       - uses: actions/setup-node@v4
         with:
           node-version: 20
-
-      - name: Install frontend dependencies
+      - name: Install frontend deps
         shell: bash
         run: cd app && npm ci
-
-      - name: Install native build dependencies
-        shell: pwsh
+      - name: Install Ninja (for the clang cmake builds)
+        run: choco install ninja --no-progress -y
+      - name: Build Tauri app (NSIS)
+        shell: bash
+        # MSVC builds whisper.cpp's ggml kernels without AVX2/FMA — scalar
+        # reference code that decodes ~15x slower than realtime (field-measured
+        # 16s per 1s of audio). clang + Ninja lets ggml's -march=native kick in.
+        env:
+          CMAKE_GENERATOR: Ninja
+          # clang-cl (LLVM's MSVC-compatible driver): plain `clang` chokes on
+          # the -fPIC the Rust toolchain injects for msvc targets.
+          CC: clang-cl
+          CXX: clang-cl
+          CFLAGS: /arch:AVX2
+          # /EHsc: clang-cl disables C++ exceptions by default; ggml's gguf.cpp
+          # uses try/catch.
+          CXXFLAGS: /arch:AVX2 /EHsc
+        run: cd app && npx tauri build --bundles nsis
+      - name: Prove whisper was built by clang
+        shell: bash
         run: |
-          choco install ninja --no-progress -y
-          choco install vulkan-sdk --version=1.4.350 --no-progress -y
-          $sdk = Get-ChildItem 'C:\VulkanSDK' -Directory |
-            Sort-Object Name -Descending |
-            Select-Object -First 1
-          if (-not $sdk) { throw 'Vulkan SDK directory not found' }
-          "VULKAN_SDK=$($sdk.FullName)" | Out-File $env:GITHUB_ENV -Append -Encoding utf8
-          "$($sdk.FullName)\Bin" | Out-File $env:GITHUB_PATH -Append -Encoding utf8
-          "Using Vulkan SDK $($sdk.FullName)"
-
-      - name: Build Vulkan Tauri app (NSIS)
+          cache=$(find app/src-tauri/target -path "*whisper*" -name CMakeCache.txt | head -1)
+          if [ -z "$cache" ]; then echo "::error::no whisper CMakeCache.txt found"; exit 1; fi
+          grep -E "CMAKE_C_COMPILER:" "$cache" || true
+          grep -qE "CMAKE_C_COMPILER:.*clang" "$cache" \
+            || { echo "::error::whisper was NOT built by clang - scalar ggml would ship"; exit 1; }
+      - name: STT speed gate — decode must beat realtime
         shell: bash
         env:
           CMAKE_GENERATOR: Ninja
@@ -47,72 +61,79 @@ jobs:
           CXX: clang-cl
           CFLAGS: /arch:AVX2
           CXXFLAGS: /arch:AVX2 /EHsc
-        run: cd app && npx tauri build --bundles nsis --features windows-vulkan
-
-      - name: Prove the intended native backends were compiled
-        shell: bash
         run: |
-          cache=""
-          while IFS= read -r candidate; do
-            if grep -qE "GGML_VULKAN:BOOL=ON" "$candidate"; then
-              cache="$candidate"
-              break
-            fi
-          done < <(find app/src-tauri/target -path "*whisper*" -name CMakeCache.txt)
-          if [ -z "$cache" ]; then echo "::error::no Vulkan whisper CMakeCache.txt found"; exit 1; fi
-          grep -qE "CMAKE_C_COMPILER:.*clang" "$cache" \
-            || { echo "::error::whisper was not built by clang"; exit 1; }
-          grep -E "CMAKE_C_COMPILER:|GGML_VULKAN:BOOL=" "$cache"
-
-      # Force the fallback so a future software/virtual Vulkan adapter on the
-      # hosted image cannot make this smoke nondeterministic. The real RX 6700
-      # XT test must instead show native confirmation and active=vulkan.
-      - name: Install and smoke the Vulkan binary with CPU fallback
-        shell: pwsh
-        run: |
-          $exe = (Get-ChildItem app\src-tauri\target\release\bundle\nsis\*.exe)[0].FullName
-          $install = Start-Process $exe -ArgumentList '/S' -Wait -PassThru
-          if ($install.ExitCode -ne 0) { throw "installer exit code $($install.ExitCode)" }
-
-          $log = "$env:RUNNER_TEMP\unmute-vulkan-real.log"
-          $env:UNMUTE_FORCE_CPU = '1'
-          $process = Start-Process "$env:LOCALAPPDATA\Unmute\Unmute.exe" -RedirectStandardError $log -PassThru
-          $ready = $false
-          for ($second = 0; $second -lt 300; $second++) {
-            Start-Sleep 1
-            if ($process.HasExited) { break }
-            if (Test-Path $log) {
-              $text = Get-Content $log -Raw
-              if (($text -match 'stt backend: requested=cpu active=cpu') -and
-                  ($text -match 'captions: SttReady')) {
-                $ready = $true
-                break
-              }
-            }
-          }
-          if (-not $process.HasExited) { Stop-Process $process -Force }
-          if (Test-Path $log) { Get-Content $log }
-          if (-not $ready) { throw 'Vulkan binary did not confirm its CPU fallback and reach SttReady' }
-
-          $uninstaller = "$env:LOCALAPPDATA\Unmute\uninstall.exe"
-          $uninstall = Start-Process $uninstaller -ArgumentList '/S' -Wait -PassThru
-          if ($uninstall.ExitCode -ne 0) { throw "uninstaller exit code $($uninstall.ExitCode)" }
-          Start-Sleep 5
-          if (Test-Path "$env:LOCALAPPDATA\Unmute\Unmute.exe") { throw 'uninstall left binaries behind' }
-
-      - name: Upload Vulkan installer
+          curl -sL -o "$RUNNER_TEMP/ggml-small-q5_1.bin" https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-small-q5_1.bin
+          cd app/src-tauri
+          CALLOUT_BENCH_MODEL="$RUNNER_TEMP/ggml-small-q5_1.bin" \
+            cargo test --release small_model_decodes_faster_than_realtime -- --ignored --nocapture
+      - name: Upload installer
         uses: actions/upload-artifact@v4
         with:
-          name: unmute-windows-vulkan-setup-${{ github.sha }}
+          name: unmute-windows-setup
           path: app/src-tauri/target/release/bundle/nsis/*.exe
           if-no-files-found: error
-          retention-days: 30
 
-      - name: Upload smoke log
+  # Install-experience QA on a real Windows machine: silent install, smoke
+  # launch (no Discord), full pipeline in mock mode, clean uninstall. A build
+  # only ships to a human after this gate is green.
+  windows-qa:
+    needs: windows-installer
+    runs-on: windows-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: unmute-windows-setup
+          path: installer
+      - name: Silent install
+        shell: pwsh
+        run: |
+          $exe = (Get-ChildItem installer\*.exe)[0].FullName
+          $p = Start-Process $exe -ArgumentList '/S' -Wait -PassThru
+          if ($p.ExitCode -ne 0) { throw "installer exit code $($p.ExitCode)" }
+          if (-not (Test-Path "$env:LOCALAPPDATA\Unmute\Unmute.exe")) { throw "Unmute.exe missing after install" }
+          if (-not (Get-ItemProperty "HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\*" |
+              Where-Object DisplayName -like 'Unmute*')) { throw "no Add/Remove Programs entry" }
+          "install OK"
+      - name: Smoke launch — real mode, no Discord present
+        shell: pwsh
+        run: |
+          $log = "$env:RUNNER_TEMP\unmute-real.log"
+          $p = Start-Process "$env:LOCALAPPDATA\Unmute\Unmute.exe" -RedirectStandardError $log -PassThru
+          Start-Sleep 25
+          $alive = -not $p.HasExited
+          if ($alive) { Stop-Process $p -Force }
+          "---- stderr (real mode) ----"
+          if (Test-Path $log) { Get-Content $log }
+          if (-not $alive) { throw "app exited early in real mode (code $($p.ExitCode)) - should idle waiting for Discord" }
+          "smoke launch OK - app idles without Discord"
+      - name: Pipeline QA — mock mode end to end
+        shell: pwsh
+        run: |
+          $log = "$env:RUNNER_TEMP\unmute-mock.log"
+          $env:CALLOUT_MOCK = "1"
+          $p = Start-Process "$env:LOCALAPPDATA\Unmute\Unmute.exe" -RedirectStandardError $log -PassThru
+          Start-Sleep 30
+          $alive = -not $p.HasExited
+          if ($alive) { Stop-Process $p -Force }
+          "---- stderr (mock mode) ----"
+          $text = ""
+          if (Test-Path $log) { $text = Get-Content $log -Raw; $text }
+          if (-not $alive) { throw "app exited early in mock mode (code $($p.ExitCode))" }
+          if ($text -notmatch "Duo Q") { throw "mock presence never joined a channel" }
+          if ($text -notmatch "final:") { throw "no caption finals flowed through the pipeline" }
+          "pipeline OK - presence + captions flow on Windows"
+      - name: Silent uninstall + clean check
+        shell: pwsh
+        run: |
+          $u = "$env:LOCALAPPDATA\Unmute\uninstall.exe"
+          Start-Process $u -ArgumentList '/S' -Wait
+          Start-Sleep 5
+          if (Test-Path "$env:LOCALAPPDATA\Unmute\Unmute.exe") { throw "uninstall left binaries behind" }
+          "uninstall OK"
+      - name: Upload QA logs
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: windows-vulkan-qa-log-${{ github.sha }}
-          path: ${{ runner.temp }}/unmute-vulkan-real.log
+          name: windows-qa-logs
+          path: ${{ runner.temp }}/unmute-*.log
           if-no-files-found: ignore
-          retention-days: 30

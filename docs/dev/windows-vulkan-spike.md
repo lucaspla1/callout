@@ -7,13 +7,13 @@ or game frametimes. It is not a release-default decision.
 ## Builds
 
 - **A / CPU:** `0.1.2`, commit `4cb22e2`.
-- **B / Vulkan:** `0.1.3`, built with Cargo feature `windows-vulkan` by
-  the spike branch's `windows-build.yml`.
+- **B / Vulkan:** `0.1.3`, artifact commit `01e9d4b`, built with Cargo feature
+  `windows-vulkan`.
 
-The branch temporarily substitutes the production workflow because GitHub can
-dispatch only a workflow path already present on the default branch. Restore
-the production `windows-build.yml` immediately after downloading the artifact;
-never merge the disposable workflow definition.
+The artifact commit temporarily substituted `windows-build.yml` because GitHub
+can dispatch only a workflow path already present on the default branch. The
+following branch commit restores the production workflow; never merge or
+cherry-pick the disposable workflow definition from `01e9d4b`.
 
 Both builds use the same Small, Turbo, and speaker models, adaptive selection,
 thread limit, partial cadence, and model directory. Do not bundle models or
